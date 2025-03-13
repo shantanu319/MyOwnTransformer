@@ -551,25 +551,5 @@ def main():
 if __name__ == "__main__":
     main()
 
-"""Baseline (Dot Product with Residual Connection)
 
-    Results: Train perplexity ≈ 311, Test perplexity ≈ 172
-    Explanation: This is our standard configuration, where the attention mechanism uses the conventional scaled dot-product and residual connections are preserved. Residual connections help with gradient flow in deep networks, allowing the model to learn incremental refinements over the input. The perplexity values indicate that the model learns the language well enough to achieve these numbers.
-
-No Residual Connection (Dot Product without Residual
-
-    Results: Train perplexity ≈ 340, Test perplexity ≈ 185
-    Explanation: Removing the residual connection prevents the model from “shortcutting” the transformation, making it more challenging to train deeper layers effectively. Without residual connections, the model must learn the entire transformation from scratch at every layer, which leads to slower or less stable training. This is reflected in the higher perplexity values on both the training and test sets, showing that the model’s ability to generalize has decreased.
-
-Cosine Similarity with Residual Connection
-
-    Results: Train perplexity ≈ 307, Test perplexity ≈ 171
-    Explanation: Replacing the dot product with cosine similarity means that the attention mechanism now measures the angle between vectors rather than their raw inner product. This normalization can make the similarity measure less sensitive to the absolute scale of the embeddings. In this case, using cosine similarity with the residual connection yields slightly better (or comparable) performance than the baseline dot product. The slight improvement suggests that cosine similarity might offer a marginal benefit in terms of robustness to scaling differences in the embeddings.
-
-Overall Comments
-
-    Residual Connections: The degradation observed when removing the residual connection confirms their importance. They help preserve information and support smoother gradient propagation in deep architectures like GPT‑2.
-    
-    Attention Metric: The small improvement with cosine similarity indicates that while the conventional dot-product is effective, normalizing via cosine similarity can be a viable alternative. However, the differences are modest—suggesting that, in this setup, both metrics can work well as long as other architectural features (like residual connections) are maintained.
-"""
 
