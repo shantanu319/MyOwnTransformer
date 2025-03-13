@@ -17,7 +17,7 @@ import torch.nn as nn
 from torch.autograd import Variable
 from transformers import GPT2TokenizerFast
 
-def read_corpus(filename,tokenizer): # unchanged
+def read_corpus(filename,tokenizer): 
     seq = []
     with open(filename,'rt') as f:
         for line in f:
@@ -27,7 +27,7 @@ def read_corpus(filename,tokenizer): # unchanged
                 seq.append(t)
     return(seq)
 
-class Embedder(nn.Module): # unchanged
+class Embedder(nn.Module): 
     def __init__(self, vocab_size, d_model):
         super().__init__()
         self.d_model = d_model
@@ -35,7 +35,7 @@ class Embedder(nn.Module): # unchanged
     def forward(self, x):
         return self.embed(x.int())
 
-class PositionalEncoder(nn.Module): # unchanged
+class PositionalEncoder(nn.Module): 
     def __init__(self, d_model, max_seq_len = 4096, dropout = 0.1):
         super().__init__()
         self.d_model = d_model
@@ -63,7 +63,7 @@ class PositionalEncoder(nn.Module): # unchanged
         x = x + pe
         return self.dropout(x)
 
-class Norm(nn.Module): # unchanged
+class Norm(nn.Module): 
     def __init__(self, d_model, eps = 1e-6):
         super().__init__()
 
@@ -80,7 +80,7 @@ class Norm(nn.Module): # unchanged
         / (x.std(dim=-1, keepdim=True) + self.eps) + self.bias
         return norm
 
-def attention(q, k, v, d_k, mask=None, dropout=None): # unchanged
+def attention(q, k, v, d_k, mask=None, dropout=None):
 
     scores = torch.matmul(q, k.transpose(-2, -1)) /  math.sqrt(d_k)
 
@@ -126,7 +126,7 @@ def attention_cosine(q, k, v, mask=None, dropout=None):
     return output
 
 
-class MultiHeadAttention(nn.Module): # unchanged
+class MultiHeadAttention(nn.Module): 
     def __init__(self, heads, d_model, dropout = 0.1):
         super().__init__()
 
@@ -164,7 +164,7 @@ class MultiHeadAttention(nn.Module): # unchanged
 
         return output
 
-class FeedForward(nn.Module): # unchanged
+class FeedForward(nn.Module): 
     def __init__(self, d_model, d_ff=2048, dropout = 0.1):
         super().__init__()
 
@@ -178,27 +178,10 @@ class FeedForward(nn.Module): # unchanged
         x = self.linear_2(x)
         return x
 
-def get_clones(module, N): # unchanged
+def get_clones(module, N): 
     return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
 
-class CosineWithRestarts(torch.optim.lr_scheduler._LRScheduler): # unchanged
-    """
-    Cosine annealing with restarts.
-
-    Parameters
-    ----------
-    optimizer : torch.optim.Optimizer
-
-    T_max : int
-        The maximum number of iterations within the first cycle.
-
-    eta_min : float, optional (default: 0)
-        The minimum learning rate.
-
-    last_epoch : int, optional (default: -1)
-        The index of the last epoch.
-
-    """
+class CosineWithRestarts(torch.optim.lr_scheduler._LRScheduler): 
 
     def __init__(self,
                  optimizer: torch.optim.Optimizer,
