@@ -494,7 +494,6 @@ def main():
     opt.verbose = False
 
     # opt.device = 0 if opt.no_cuda is False else -1
-    # opt.device = torch.device("cuda:0" if not opt.no_cuda and torch.cuda.is_available() else "cpu")
     opt.device = torch.device("cuda:0" if (not opt.no_cuda and torch.cuda.is_available()) else "cpu")
 
     time_name = time.strftime("%y%m%d_%H%M%S")
