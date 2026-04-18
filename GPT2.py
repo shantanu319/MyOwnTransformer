@@ -45,10 +45,8 @@ class PositionalEncoder(nn.Module):
         pe = torch.zeros(max_seq_len, d_model)
         for pos in range(max_seq_len):
             for i in range(0, d_model, 2):
-                pe[pos, i] = \
-                math.sin(pos / (10000 ** ((2 * i)/d_model)))
-                pe[pos, i + 1] = \
-                math.cos(pos / (10000 ** ((2 * (i + 1))/d_model)))
+                pe[pos, i] = math.sin(pos / (10000 ** ((2 * i)/d_model)))
+                pe[pos, i + 1] = math.cos(pos / (10000 ** ((2 * (i + 1))/d_model)))
         pe = pe.unsqueeze(0)
         self.register_buffer('pe', pe)
 
@@ -76,8 +74,7 @@ class Norm(nn.Module):
         self.eps = eps
 
     def forward(self, x):
-        norm = self.alpha * (x - x.mean(dim=-1, keepdim=True)) \
-        / (x.std(dim=-1, keepdim=True) + self.eps) + self.bias
+        norm = self.alpha * (x - x.mean(dim=-1, keepdim=True)) / (x.std(dim=-1, keepdim=True) + self.eps) + self.bias
         return norm
 
 def attention(q, k, v, d_k, mask=None, dropout=None):
@@ -271,28 +268,9 @@ class DecoderLayer(nn.Module): # deleted any reference to encoder outputs
     def forward(self, x, mask): # can remove e_outputs and src_mask since we only need one mask
         x2 = self.norm_1(x)
         x = x + self.dropout_1(self.attn_1(x2, x2, x2, mask))
-        # get rid of self.attn_2 and self.dropout_2 which connect to encoder
-        # x2 = self.norm_2(x)
-        # x = x + self.dropout_2(self.attn_2(x2, e_outputs, e_outputs,
-        # src_mask))
         x2 = self.norm_3(x)
         x = x + self.dropout_3(self.ff(x2))
         return x
-
-# class Encoder(nn.Module): # not needed since GPT2 is decoder only
-#     def __init__(self, vocab_size, d_model, N, heads, dropout):
-#         super().__init__()
-#         self.N = N
-#         self.embed = Embedder(vocab_size, d_model)
-#         self.pe = PositionalEncoder(d_model, dropout=dropout)
-#         self.layers = get_clones(EncoderLayer(d_model, heads, dropout), N)
-#         self.norm = Norm(d_model)
-#     def forward(self, src, mask):
-#         x = self.embed(src)
-#         x = self.pe(x)
-#         for i in range(self.N):
-#             x = self.layers[i](x, mask)
-#         return self.norm(x)
 
 class Decoder(nn.Module):
     def __init__(self, vocab, d_model, N, heads, dropout):
@@ -312,14 +290,11 @@ class Decoder(nn.Module):
 class Transformer(nn.Module):
     def __init__(self, vocab, d_model, N, heads, dropout): #trg_vocab and src_vocab merged to vocab
         super().__init__()
-        # self.encoder = Encoder(src_vocab, d_model, N, heads, dropout)
         self.decoder = Decoder(vocab, d_model, N, heads, dropout)
         self.out = nn.Linear(d_model, vocab)
         self.out.weight = self.decoder.embed.embed.weight
 
     def forward(self, vocab, mask): # merged src and trg masks
-        # e_outputs = self.encoder(src, src_mask)
-        #print("DECODER")
         d_output = self.decoder(vocab, mask) # removed e_outputs and src_mask
         output = self.out(d_output)
         return output
