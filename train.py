@@ -3,7 +3,6 @@ import math
 import random
 import time
 
-import numpy as np
 import matplotlib.pyplot as plt
 
 import torch
@@ -38,61 +37,25 @@ def make_optimizers(model, muon_lr=0.02, adamw_lr=3e-4):
     adamw = torch.optim.AdamW(
         adamw_params, lr=adamw_lr, weight_decay=0.1, betas=(0.9, 0.95)
     )
+    for opt in (muon, adamw):
+        for group in opt.param_groups:
+            group['peak_lr'] = group['lr']
     return [muon, adamw]
 
 
-class CosineWithRestarts(torch.optim.lr_scheduler._LRScheduler):
+def lr_factor(step, total_steps, warmup_steps=100, min_lr_ratio=0.1):
+    if step < warmup_steps:
+        return (step + 1) / warmup_steps
+    progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
+    cosine = 0.5 * (1 + math.cos(math.pi * min(1.0, progress)))
+    return min_lr_ratio + (1 - min_lr_ratio) * cosine
 
-    def __init__(self,
-                 optimizer: torch.optim.Optimizer,
-                 T_max: int,
-                 eta_min: float = 0.,
-                 last_epoch: int = -1,
-                 factor: float = 1.) -> None:
-        # pylint: disable=invalid-name
-        self.T_max = T_max
-        self.eta_min = eta_min
-        self.factor = factor
-        self._last_restart: int = 0
-        self._cycle_counter: int = 0
-        self._cycle_factor: float = 1.
-        self._updated_cycle_len: int = T_max
-        self._initialized: bool = False
-        super(CosineWithRestarts, self).__init__(optimizer, last_epoch)
 
-    def get_lr(self):
-        """Get updated learning rate."""
-        # HACK: We need to check if this is the first time get_lr() was called, since
-        # we want to start with step = 0, but _LRScheduler calls get_lr with
-        # last_epoch + 1 when initialized.
-        if not self._initialized:
-            self._initialized = True
-            return self.base_lrs
-
-        step = self.last_epoch + 1
-        self._cycle_counter = step - self._last_restart
-
-        lrs = [
-            (
-                self.eta_min + ((lr - self.eta_min) / 2) *
-                (
-                    np.cos(
-                        np.pi *
-                        ((self._cycle_counter) % self._updated_cycle_len) /
-                        self._updated_cycle_len
-                    ) + 1
-                )
-            ) for lr in self.base_lrs
-        ]
-
-        if self._cycle_counter % self._updated_cycle_len == 0:
-            # Adjust the cycle length.
-            self._cycle_factor *= self.factor
-            self._cycle_counter = 0
-            self._updated_cycle_len = int(self._cycle_factor * self.T_max)
-            self._last_restart = step
-
-        return lrs
+def apply_lr_schedule(optimizers, step, total_steps, warmup_steps):
+    factor = lr_factor(step, total_steps, warmup_steps=warmup_steps)
+    for opt in optimizers:
+        for group in opt.param_groups:
+            group['lr'] = group['peak_lr'] * factor
 
 
 def train_model(model, opt):
@@ -101,6 +64,7 @@ def train_model(model, opt):
     training_perplexities = []
     validation_perplexities = []
 
+    step = 0
     for epoch in range(opt.epochs):
         epoch_loss = 0
         epoch_tokens = 0
@@ -108,6 +72,8 @@ def train_model(model, opt):
 
         for inX, out in data_feeder(opt.train, opt.batchsize, opt.seqlen, opt.device):
             iter += 1
+            apply_lr_schedule(opt.optimizers, step, opt.total_steps, opt.warmup_steps)
+
             mask = nopeak_mask(inX.size(1), opt.device)
             pred = model(inX, mask)
             pred = pred.view(-1, opt.vocab_size)
@@ -125,7 +91,8 @@ def train_model(model, opt):
 
             if iter % opt.printevery == 0:
                 current_pplx = math.exp(loss.item())
-                print(f"Epoch {epoch+1} | iter {iter} | Loss: {loss.item():.4f} | pplx: {current_pplx:.2f}")
+                print(f"Epoch {epoch+1} | iter {iter} | step {step} | Loss: {loss.item():.4f} | pplx: {current_pplx:.2f}")
+            step += 1
 
         train_loss = epoch_loss / epoch_tokens
         train_pplx = math.exp(train_loss)
@@ -234,14 +201,14 @@ def main():
     opt.vocab_size = 50257
     opt.indices = build_vocab_indices(opt.vocab_size, opt.device)
 
-    model = get_model(opt, opt.vocab_size)  # cut params down to vocab_size and opt
+    model = get_model(opt, opt.vocab_size)
 
-    model_parameters = filter(lambda p: p.requires_grad, model.parameters())
-    params = sum([np.prod(p.size()) for p in model_parameters])
-    text = 'total params: %d' % (params)
-    print(text)
+    params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f'total params: {params}')
 
-    opt.optimizers = make_optimizers(model, adamw_lr=opt.lr)
+    opt.optimizers = make_optimizers(model, muon_lr=opt.muon_lr, adamw_lr=opt.lr)
+    batches_per_epoch = max(1, len(opt.train) // (opt.batchsize * opt.seqlen))
+    opt.total_steps = max(1, opt.epochs * batches_per_epoch)
 
     if opt.savename is not None:
         try:
