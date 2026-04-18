@@ -58,12 +58,13 @@ def apply_lr_schedule(optimizers, step, total_steps, warmup_steps):
             group['lr'] = group['peak_lr'] * factor
 
 
-def save_checkpoint(model, optimizers, step, path):
+def save_checkpoint(model, optimizers, step, path, config=None):
     os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
     torch.save({
         'step': step,
         'model': model.state_dict(),
         'optimizers': [o.state_dict() for o in optimizers],
+        'config': config,
     }, path)
 
 
@@ -112,7 +113,7 @@ def train_model(model, opt):
             step += 1
             if opt.save_every and step % opt.save_every == 0:
                 path = _checkpoint_path(opt, f'step{step}')
-                save_checkpoint(model, opt.optimizers, step, path)
+                save_checkpoint(model, opt.optimizers, step, path, config=opt.model_config)
                 print(f"Saved checkpoint: {path}")
 
         train_loss = epoch_loss / epoch_tokens
@@ -124,7 +125,7 @@ def train_model(model, opt):
         validation_losses.append(valid_loss)
 
     final_path = _checkpoint_path(opt, 'final')
-    save_checkpoint(model, opt.optimizers, step, final_path)
+    save_checkpoint(model, opt.optimizers, step, final_path, config=opt.model_config)
     print(f"Saved final checkpoint: {final_path}")
 
     return training_losses, validation_losses
@@ -224,6 +225,14 @@ def main():
     opt.test = opt.valid
 
     model = get_model(opt, opt.vocab_size)
+
+    opt.model_config = {
+        'vocab_size': opt.vocab_size,
+        'd_model': opt.d_model,
+        'n_layers': opt.n_layers,
+        'heads': opt.heads,
+        'dropout': opt.dropout,
+    }
 
     params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f'total params: {params}')
