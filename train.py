@@ -11,7 +11,7 @@ import torch.nn.functional as F
 from transformers import GPT2TokenizerFast
 
 from config import parse_args
-from data import read_corpus, data_feeder
+from data import load_tinystories, data_feeder
 from model import get_model, nopeak_mask
 
 
@@ -208,11 +208,10 @@ def main():
     opt.savename = "/weights"
 
     tokenizer = GPT2TokenizerFast.from_pretrained("gpt2")
-    opt.train = read_corpus('wiki2.train.txt', tokenizer)
-    opt.valid = read_corpus('wiki2.valid.txt', tokenizer)
-    opt.test = read_corpus('wiki2.test.txt', tokenizer)
+    opt.train = load_tinystories(tokenizer, split='train', max_docs=opt.max_docs)
+    opt.valid = load_tinystories(tokenizer, split='validation', max_docs=max(10, opt.max_docs // 10))
+    opt.test = opt.valid
 
-    obs = len(opt.train)
     opt.vocab_size = 50257
     opt.indices = build_vocab_indices(opt.vocab_size, opt.device)
 

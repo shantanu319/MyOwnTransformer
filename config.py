@@ -20,6 +20,8 @@ def parse_args():
     parser.add_argument('-tied', type=int, default=1)
     parser.add_argument('-dir_name', type=str, default='model')
     parser.add_argument('-norm', type=float, default=2.0)
+    parser.add_argument('-max_docs', type=int, default=1000,
+                        help='Max TinyStories docs to load per split (None = all)')
 
     opt, unknown = parser.parse_known_args()
     return opt
