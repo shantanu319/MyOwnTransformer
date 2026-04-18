@@ -15,6 +15,15 @@ from data import read_corpus, data_feeder
 from model import get_model, nopeak_mask
 
 
+def resolve_device(no_cuda):
+    use_cuda = (not no_cuda) and torch.cuda.is_available()
+    return torch.device("cuda:0" if use_cuda else "cpu")
+
+
+def build_vocab_indices(vocab_size, device):
+    return torch.arange(vocab_size, device=device)
+
+
 class CosineWithRestarts(torch.optim.lr_scheduler._LRScheduler):
 
     def __init__(self,
@@ -184,7 +193,7 @@ def main():
     opt = parse_args()
     opt.verbose = False
 
-    opt.device = torch.device("cuda:0" if (not opt.no_cuda and torch.cuda.is_available()) else "cpu")
+    opt.device = resolve_device(opt.no_cuda)
 
     time_name = time.strftime("%y%m%d_%H%M%S")
     opt.time_name = time_name
@@ -205,11 +214,7 @@ def main():
 
     obs = len(opt.train)
     opt.vocab_size = 50257
-    temp = []
-    for i in range(opt.vocab_size):
-        temp.append(i)
-    opt.indices = torch.tensor(temp)
-    opt.indices = opt.indices.cuda()
+    opt.indices = build_vocab_indices(opt.vocab_size, opt.device)
 
     model = get_model(opt, opt.vocab_size)  # cut params down to vocab_size and opt
 

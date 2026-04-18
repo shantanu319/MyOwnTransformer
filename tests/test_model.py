@@ -39,9 +39,12 @@ def test_backward_produces_gradients():
     loss = F.cross_entropy(logits.view(-1, V), y.view(-1))
     loss.backward()
 
-    params_with_grad = [p for p in model.parameters() if p.grad is not None]
-    assert len(params_with_grad) > 0
-    assert all(torch.isfinite(p.grad).all() for p in params_with_grad)
+    trainable_params = {name: p for name, p in model.named_parameters() if p.requires_grad}
+    missing_grad = [name for name, p in trainable_params.items() if p.grad is None]
+    non_finite_grad = [name for name, p in trainable_params.items() if p.grad is not None and not torch.isfinite(p.grad).all()]
+
+    assert not missing_grad, f"parameters missing gradients: {missing_grad}"
+    assert not non_finite_grad, f"parameters with non-finite gradients: {non_finite_grad}"
 
 
 def test_can_overfit_single_batch():
