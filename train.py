@@ -24,6 +24,23 @@ def build_vocab_indices(vocab_size, device):
     return torch.arange(vocab_size, device=device)
 
 
+def make_optimizers(model, muon_lr=0.02, adamw_lr=3e-4):
+    embedding_weight = model.decoder.embed.embed.weight
+    muon_params, adamw_params = [], []
+    for p in model.parameters():
+        if not p.requires_grad:
+            continue
+        if p is embedding_weight or p.ndim < 2:
+            adamw_params.append(p)
+        else:
+            muon_params.append(p)
+    muon = torch.optim.Muon(muon_params, lr=muon_lr)
+    adamw = torch.optim.AdamW(
+        adamw_params, lr=adamw_lr, weight_decay=0.1, betas=(0.9, 0.95)
+    )
+    return [muon, adamw]
+
+
 class CosineWithRestarts(torch.optim.lr_scheduler._LRScheduler):
 
     def __init__(self,
@@ -100,9 +117,11 @@ def train_model(model, opt):
             epoch_loss += loss.item() * out.size(0)
             epoch_tokens += out.size(0)
 
-            opt.optimizer.zero_grad()
+            for o in opt.optimizers:
+                o.zero_grad()
             loss.backward()
-            opt.optimizer.step()
+            for o in opt.optimizers:
+                o.step()
 
             if iter % opt.printevery == 0:
                 current_pplx = math.exp(loss.item())
@@ -222,9 +241,7 @@ def main():
     text = 'total params: %d' % (params)
     print(text)
 
-    opt.optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr, betas=(0.9, 0.98), eps=1e-9)
-    if opt.SGDR == True:
-        opt.sched = CosineWithRestarts(opt.optimizer, T_max=opt.train_len)
+    opt.optimizers = make_optimizers(model, adamw_lr=opt.lr)
 
     if opt.savename is not None:
         try:
