@@ -12,6 +12,22 @@ def read_corpus(filename, tokenizer):
     return seq
 
 
+def load_tinystories(tokenizer, split='train', max_docs=None):
+    from datasets import load_dataset
+
+    ds = load_dataset("roneneldan/TinyStories", split=split, streaming=True)
+    eos_id = tokenizer.eos_token_id if tokenizer.eos_token_id is not None else 0
+
+    tokens = []
+    for i, row in enumerate(ds):
+        if max_docs is not None and i >= max_docs:
+            break
+        ids = tokenizer(row['text'])['input_ids']
+        tokens.extend(ids)
+        tokens.append(eos_id)
+    return tokens
+
+
 def data_feeder(data, batch_size, seq_len, device):
     total = len(data)
     num_sequences = total // seq_len
