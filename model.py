@@ -46,22 +46,15 @@ class PositionalEncoder(nn.Module):
         return self.dropout(x)
 
 
-class Norm(nn.Module):
+class RMSNorm(nn.Module):
     def __init__(self, d_model, eps=1e-6):
         super().__init__()
-
-        self.size = d_model
-
-        # create two learnable parameters to calibrate normalisation
-        self.alpha = nn.Parameter(torch.ones(self.size))
-        self.bias = nn.Parameter(torch.zeros(self.size))
-
         self.eps = eps
+        self.weight = nn.Parameter(torch.ones(d_model))
 
     def forward(self, x):
-        norm = self.alpha * (x - x.mean(dim=-1, keepdim=True)) \
-            / (x.std(dim=-1, keepdim=True) + self.eps) + self.bias
-        return norm
+        rms = torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
+        return self.weight * x * rms
 
 
 def attention(q, k, v, d_k, mask=None, dropout=None):
@@ -143,8 +136,8 @@ def get_clones(module, N):
 class DecoderLayer(nn.Module):  # deleted any reference to encoder outputs
     def __init__(self, d_model, heads, dropout=0.1):
         super().__init__()
-        self.norm_1 = Norm(d_model)
-        self.norm_3 = Norm(d_model)
+        self.norm_1 = RMSNorm(d_model)
+        self.norm_3 = RMSNorm(d_model)
 
         self.dropout_1 = nn.Dropout(dropout)
         self.dropout_3 = nn.Dropout(dropout)
@@ -167,7 +160,7 @@ class Decoder(nn.Module):
         self.embed = Embedder(vocab, d_model)
         self.pe = PositionalEncoder(d_model, dropout=dropout)
         self.layers = get_clones(DecoderLayer(d_model, heads, dropout), N)
-        self.norm = Norm(d_model)
+        self.norm = RMSNorm(d_model)
 
     def forward(self, trg, mask):
         x = self.embed(trg)
