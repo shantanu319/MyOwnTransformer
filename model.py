@@ -81,36 +81,6 @@ def attention(q, k, v, d_k, mask=None, dropout=None):
     return output
 
 
-def attention_cosine(q, k, v, mask=None, dropout=None):
-    # q, k shape: [batch_size, heads, seq_len, d_k]
-    # Compute dot product: shape [batch_size, heads, seq_len, seq_len]
-    dot = torch.matmul(q, k.transpose(-2, -1))
-
-    # Compute norms for q and k
-    q_norm = torch.norm(q, dim=-1, keepdim=True)  # shape: [batch_size, heads, seq_len, 1]
-    k_norm = torch.norm(k, dim=-1, keepdim=True)  # shape: [batch_size, heads, seq_len, 1]
-
-    # Compute pairwise product of norms: shape becomes [batch_size, heads, seq_len, seq_len]
-    denom = q_norm * k_norm.transpose(-2, -1) + 1e-8  # add epsilon to avoid division by zero
-
-    # Calculate cosine similarity scores
-    scores = dot / denom
-
-    if mask is not None:
-        mask = mask.unsqueeze(1)  # Broadcast mask for each head
-        scores = scores.masked_fill(mask == 0, -1e9)
-
-    # Apply softmax to obtain attention weights
-    scores = F.softmax(scores, dim=-1)
-
-    if dropout is not None:
-        scores = dropout(scores)
-
-    # Multiply by v to get the final output
-    output = torch.matmul(scores, v)
-    return output
-
-
 class MultiHeadAttention(nn.Module):
     def __init__(self, heads, d_model, dropout=0.1):
         super().__init__()
@@ -140,8 +110,7 @@ class MultiHeadAttention(nn.Module):
         q = q.transpose(1, 2)
         v = v.transpose(1, 2)
 
-        # calculate attention using function we will define next
-        scores = attention_cosine(q, k, v, mask, self.dropout)
+        scores = attention(q, k, v, self.d_k, mask, self.dropout)
         # concatenate heads and put through final linear layer
         concat = scores.transpose(1, 2).contiguous() \
             .view(bs, -1, self.d_model)
