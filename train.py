@@ -7,11 +7,11 @@ import matplotlib.pyplot as plt
 
 import torch
 import torch.nn.functional as F
-from transformers import GPT2TokenizerFast
 
 from config import parse_args
-from data import load_tinystories, data_feeder
+from data import data_feeder, load_bin
 from model import get_model, nopeak_mask
+from tokenizer import BPETokenizer
 
 
 def resolve_device(no_cuda):
@@ -188,7 +188,7 @@ def test_model(model, opt, epoch):
 
 def main():
 
-    random.seed(10)
+    random.seed(42)
 
     opt = parse_args()
     opt.verbose = False
@@ -205,12 +205,23 @@ def main():
 
     print(str(opt))
 
-    tokenizer = GPT2TokenizerFast.from_pretrained("gpt2")
-    opt.train = load_tinystories(tokenizer, split='train', max_docs=opt.max_docs)
-    opt.valid = load_tinystories(tokenizer, split='validation', max_docs=max(10, opt.max_docs // 10))
-    opt.test = opt.valid
+    tok_path = os.path.join(opt.data_dir, 'tokenizer.json')
+    train_bin = os.path.join(opt.data_dir, 'train.bin')
+    val_bin = os.path.join(opt.data_dir, 'val.bin')
+    for p in (tok_path, train_bin, val_bin):
+        if not os.path.exists(p):
+            raise FileNotFoundError(
+                f"missing {p} — run `python prepare.py --output-dir {opt.data_dir}` first"
+            )
 
-    opt.vocab_size = 50257
+    tokenizer = BPETokenizer()
+    tokenizer.load(tok_path)
+    opt.tokenizer = tokenizer
+    opt.vocab_size = tokenizer.vocab_size
+
+    opt.train = load_bin(train_bin)
+    opt.valid = load_bin(val_bin)
+    opt.test = opt.valid
 
     model = get_model(opt, opt.vocab_size)
 
