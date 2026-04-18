@@ -1,4 +1,12 @@
+import numpy as np
 import torch
+
+
+BIN_DTYPE = np.uint16
+
+
+def load_bin(path):
+    return np.memmap(path, dtype=BIN_DTYPE, mode='r')
 
 
 def read_corpus(filename, tokenizer):
@@ -31,13 +39,12 @@ def load_tinystories(tokenizer, split='train', max_docs=None):
 def data_feeder(data, batch_size, seq_len, device):
     total = len(data)
     num_sequences = total // seq_len
-    data = data[:num_sequences * seq_len]
-    data = torch.tensor(data, dtype=torch.long, device=device)
 
-    data = data.view(num_sequences, seq_len)
-
-    for i in range(0, num_sequences, batch_size):
-        x = data[i:i + batch_size]
-        if x.size(0) < batch_size:
+    for start_seq in range(0, num_sequences, batch_size):
+        end_seq = start_seq + batch_size
+        if end_seq > num_sequences:
             break
-        yield x[:, :-1], x[:, 1:]
+        slice_data = data[start_seq * seq_len: end_seq * seq_len]
+        batch = torch.tensor(np.asarray(slice_data), dtype=torch.long, device=device)
+        batch = batch.view(batch_size, seq_len)
+        yield batch[:, :-1], batch[:, 1:]
