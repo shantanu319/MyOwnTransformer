@@ -18,6 +18,8 @@ def parse_args():
     parser.add_argument('-threshold', type=int, default=3)
     parser.add_argument('-savename', type=str)
     parser.add_argument('-loadname', type=str)
+    parser.add_argument('-save_every', type=int, default=500,
+                        help='Save a checkpoint every N training steps (0 disables periodic saves)')
     parser.add_argument('-tied', type=int, default=1)
     parser.add_argument('-dir_name', type=str, default='model')
     parser.add_argument('-norm', type=float, default=2.0)

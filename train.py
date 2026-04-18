@@ -58,11 +58,25 @@ def apply_lr_schedule(optimizers, step, total_steps, warmup_steps):
             group['lr'] = group['peak_lr'] * factor
 
 
+def save_checkpoint(model, optimizers, step, path):
+    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+    torch.save({
+        'step': step,
+        'model': model.state_dict(),
+        'optimizers': [o.state_dict() for o in optimizers],
+    }, path)
+
+
+def _checkpoint_path(opt, tag):
+    base = opt.savename or 'ckpt'
+    return os.path.join(opt.dir_name, f'{base}_{tag}.pt')
+
+
 def train_model(model, opt):
     print("training model...")
     model.train()
-    training_perplexities = []
-    validation_perplexities = []
+    training_losses = []
+    validation_losses = []
 
     step = 0
     for epoch in range(opt.epochs):
@@ -94,21 +108,26 @@ def train_model(model, opt):
             if iter % opt.printevery == 0:
                 current_pplx = math.exp(loss.item())
                 print(f"Epoch {epoch+1} | iter {iter} | step {step} | Loss: {loss.item():.4f} | pplx: {current_pplx:.2f}")
+
             step += 1
+            if opt.save_every and step % opt.save_every == 0:
+                path = _checkpoint_path(opt, f'step{step}')
+                save_checkpoint(model, opt.optimizers, step, path)
+                print(f"Saved checkpoint: {path}")
 
         train_loss = epoch_loss / epoch_tokens
-        train_pplx = math.exp(train_loss)
-        training_perplexities.append(train_pplx)
-        print(f"Epoch {epoch+1} finished: Train Perplexity = {train_pplx:.2f}")
+        training_losses.append(train_loss)
+        print(f"Epoch {epoch+1} finished: Train Loss = {train_loss:.4f}")
 
         # Validate at the end of each epoch:
-        valid_pplx = validate_model(model, opt)
-        validation_perplexities.append(valid_pplx)
+        valid_loss = validate_model(model, opt)
+        validation_losses.append(valid_loss)
 
-    if opt.savename:
-        torch.save(model.state_dict(), opt.dir_name + opt.savename)
+    final_path = _checkpoint_path(opt, 'final')
+    save_checkpoint(model, opt.optimizers, step, final_path)
+    print(f"Saved final checkpoint: {final_path}")
 
-    return training_perplexities, validation_perplexities
+    return training_losses, validation_losses
 
 
 def validate_model(model, opt):
@@ -127,21 +146,20 @@ def validate_model(model, opt):
             total_loss += loss.item() * out.size(0)
             total_tokens += out.size(0)
 
-    pplx = math.exp(total_loss / total_tokens)
-    print(f"Validation Perplexity = {pplx:.2f}")
-    return pplx
+    avg_loss = total_loss / total_tokens
+    print(f"Validation Loss = {avg_loss:.4f}")
+    return avg_loss
 
 
-def plot_learning_curves(train_perplexities, valid_perplexities):
+def plot_learning_curves(train_losses, valid_losses):
     plt.figure(figsize=(10, 6))
-    plt.plot(train_perplexities, label='Training')
-    plt.plot(valid_perplexities, label='Validation')
+    plt.plot(train_losses, label='Training')
+    plt.plot(valid_losses, label='Validation')
     plt.xlabel('Epoch')
-    plt.ylabel('Perplexity')
+    plt.ylabel('Cross-Entropy Loss')
     plt.title('Learning Curves')
     plt.legend()
     plt.grid(True)
-    plt.yscale('log')
     plt.savefig('learning_curves.png')
     plt.show()
 
@@ -187,15 +205,12 @@ def main():
 
     print(str(opt))
 
-    opt.savename = "/weights"
-
     tokenizer = GPT2TokenizerFast.from_pretrained("gpt2")
     opt.train = load_tinystories(tokenizer, split='train', max_docs=opt.max_docs)
     opt.valid = load_tinystories(tokenizer, split='validation', max_docs=max(10, opt.max_docs // 10))
     opt.test = opt.valid
 
     opt.vocab_size = 50257
-    opt.indices = build_vocab_indices(opt.vocab_size, opt.device)
 
     model = get_model(opt, opt.vocab_size)
 
@@ -206,16 +221,8 @@ def main():
     batches_per_epoch = max(1, len(opt.train) // (opt.batchsize * opt.seqlen))
     opt.total_steps = max(1, opt.epochs * batches_per_epoch)
 
-    if opt.savename is not None:
-        try:
-            os.mkdir(opt.savename)
-        except:
-            nothing = 1
-    opt.src_pad = 0
-    opt.trg_pad = 0
-
-    train_pplx, valid_pplx = train_model(model, opt)
-    plot_learning_curves(train_pplx, valid_pplx)
+    train_losses, valid_losses = train_model(model, opt)
+    plot_learning_curves(train_losses, valid_losses)
     test_model(model, opt, -1)
 
 
