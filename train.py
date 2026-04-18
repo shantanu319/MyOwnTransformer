@@ -75,17 +75,19 @@ def train_model(model, opt):
             apply_lr_schedule(opt.optimizers, step, opt.total_steps, opt.warmup_steps)
 
             mask = nopeak_mask(inX.size(1), opt.device)
-            pred = model(inX, mask)
-            pred = pred.view(-1, opt.vocab_size)
-            out = out.reshape(-1)
+            with torch.autocast(device_type=opt.device.type, dtype=torch.bfloat16):
+                pred = model(inX, mask)
+                pred = pred.view(-1, opt.vocab_size)
+                out = out.reshape(-1)
+                loss = F.cross_entropy(pred, out)
 
-            loss = F.cross_entropy(pred, out)
             epoch_loss += loss.item() * out.size(0)
             epoch_tokens += out.size(0)
 
             for o in opt.optimizers:
                 o.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=opt.norm)
             for o in opt.optimizers:
                 o.step()
 
@@ -115,8 +117,7 @@ def validate_model(model, opt):
     total_loss = 0
     total_tokens = 0
 
-    # Use no_grad() to prevent gradient computations during validation
-    with torch.no_grad():
+    with torch.no_grad(), torch.autocast(device_type=opt.device.type, dtype=torch.bfloat16):
         for inX, out in data_feeder(opt.valid, opt.batchsize, opt.seqlen, opt.device):
             mask = nopeak_mask(inX.size(1), opt.device)
             pred = model(inX, mask)
@@ -151,18 +152,13 @@ def test_model(model, opt, epoch):
     total_loss = 0
     total_tokens = 0
 
-    # write code to generate perplexity of test set
-    with torch.no_grad():
+    with torch.no_grad(), torch.autocast(device_type=opt.device.type, dtype=torch.bfloat16):
         for x_in, x_out in data_feeder(opt.test, opt.batchsize, opt.seqlen, opt.device):
             mask = nopeak_mask(x_in.size(1), opt.device)
-
             preds = model(x_in, mask)
             preds = preds.view(-1, opt.vocab_size)
             x_out = x_out.reshape(-1)
-
             loss = F.cross_entropy(preds, x_out)
-
-            batch_tokens = x_out.size(0)
             total_loss += loss.item() * x_out.size(0)
             total_tokens += x_out.size(0)
 
