@@ -209,7 +209,8 @@ def main():
     tok_path = os.path.join(opt.data_dir, 'tokenizer.json')
     train_bin = os.path.join(opt.data_dir, 'train.bin')
     val_bin = os.path.join(opt.data_dir, 'val.bin')
-    for p in (tok_path, train_bin, val_bin):
+    test_bin = os.path.join(opt.data_dir, 'test.bin')
+    for p in (tok_path, train_bin, val_bin, test_bin):
         if not os.path.exists(p):
             raise FileNotFoundError(
                 f"missing {p} — run `python prepare.py --output-dir {opt.data_dir}` first"
@@ -222,7 +223,7 @@ def main():
 
     opt.train = load_bin(train_bin)
     opt.valid = load_bin(val_bin)
-    opt.test = opt.valid
+    opt.test = load_bin(test_bin)
 
     model = get_model(opt, opt.vocab_size)
 

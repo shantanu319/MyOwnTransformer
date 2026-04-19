@@ -29,6 +29,15 @@ def _bpe_training_corpus(dataset, num_docs):
     return '\n'.join(texts)
 
 
+def _encode_row(tokenizer, row, eos_id):
+    ids = tokenizer.encode_ordinary(row['text'])
+    ids.append(eos_id)
+    arr = np.array(ids, dtype=BIN_DTYPE)
+    if arr.max() >= np.iinfo(BIN_DTYPE).max:
+        raise ValueError(f"token id {arr.max()} exceeds {BIN_DTYPE} range")
+    return arr
+
+
 def _tokenize_split_to_bin(tokenizer, dataset, eos_id, out_path, max_docs=None):
     doc_count = 0
     token_count = 0
@@ -36,19 +45,34 @@ def _tokenize_split_to_bin(tokenizer, dataset, eos_id, out_path, max_docs=None):
         for row in dataset:
             if max_docs is not None and doc_count >= max_docs:
                 break
-            ids = tokenizer.encode_ordinary(row['text'])
-            ids.append(eos_id)
-            arr = np.array(ids, dtype=BIN_DTYPE)
-            if arr.max() >= np.iinfo(BIN_DTYPE).max:
-                raise ValueError(
-                    f"token id {arr.max()} exceeds {BIN_DTYPE} range"
-                )
+            arr = _encode_row(tokenizer, row, eos_id)
             f.write(arr.tobytes())
             doc_count += 1
-            token_count += len(ids)
+            token_count += len(arr)
             if doc_count % 10000 == 0:
                 print(f"  tokenized {doc_count} docs, {token_count:,} tokens")
     return token_count
+
+
+def _tokenize_split_two_bins(tokenizer, dataset, eos_id, val_path, test_path, max_docs=None):
+    """Stream a dataset to two .bin shards by alternating doc index
+    (even -> val, odd -> test). Gives a deterministic ~50/50 split."""
+    doc_count = 0
+    val_tokens = 0
+    test_tokens = 0
+    with open(val_path, 'wb') as vf, open(test_path, 'wb') as tf:
+        for i, row in enumerate(dataset):
+            if max_docs is not None and doc_count >= max_docs:
+                break
+            arr = _encode_row(tokenizer, row, eos_id)
+            if i % 2 == 0:
+                vf.write(arr.tobytes())
+                val_tokens += len(arr)
+            else:
+                tf.write(arr.tobytes())
+                test_tokens += len(arr)
+            doc_count += 1
+    return val_tokens, test_tokens
 
 
 def main():
@@ -61,8 +85,8 @@ def main():
                         help='Number of docs to use for BPE training')
     parser.add_argument('--max-train-docs', type=int, default=None,
                         help='Cap for tokenizing train split (default: full split)')
-    parser.add_argument('--max-val-docs', type=int, default=None,
-                        help='Cap for tokenizing validation split')
+    parser.add_argument('--max-eval-docs', type=int, default=None,
+                        help='Cap for tokenizing validation split (halved into val + test)')
     args = parser.parse_args()
 
     assert args.vocab_size > 256, "vocab_size must leave room for base bytes"
@@ -92,14 +116,18 @@ def main():
 
     train_path = os.path.join(args.output_dir, 'train.bin')
     val_path = os.path.join(args.output_dir, 'val.bin')
+    test_path = os.path.join(args.output_dir, 'test.bin')
 
     print("Tokenizing train split...")
     n_train = _tokenize_split_to_bin(tokenizer, train_ds, eos_id, train_path, args.max_train_docs)
     print(f"  wrote {n_train:,} tokens to {train_path}")
 
-    print("Tokenizing validation split...")
-    n_val = _tokenize_split_to_bin(tokenizer, val_ds, eos_id, val_path, args.max_val_docs)
+    print("Tokenizing validation split into val + test (50/50 by doc index)...")
+    n_val, n_test = _tokenize_split_two_bins(
+        tokenizer, val_ds, eos_id, val_path, test_path, args.max_eval_docs
+    )
     print(f"  wrote {n_val:,} tokens to {val_path}")
+    print(f"  wrote {n_test:,} tokens to {test_path}")
 
 
 if __name__ == '__main__':
