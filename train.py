@@ -152,16 +152,22 @@ def validate_model(model, opt):
     return avg_loss
 
 
-def plot_learning_curves(train_losses, valid_losses):
+def plot_learning_curves(train_losses, valid_losses, test_loss=None, path='learning_curves.png'):
     plt.figure(figsize=(10, 6))
-    plt.plot(train_losses, label='Training')
-    plt.plot(valid_losses, label='Validation')
+    epochs = range(1, len(train_losses) + 1)
+    plt.plot(epochs, train_losses, label='Training', marker='o')
+    plt.plot(epochs, valid_losses, label='Validation', marker='o')
+    if test_loss is not None:
+        plt.axhline(
+            y=test_loss, linestyle='--', color='gray',
+            label=f'Test (final) = {test_loss:.3f}',
+        )
     plt.xlabel('Epoch')
     plt.ylabel('Cross-Entropy Loss')
     plt.title('Learning Curves')
     plt.legend()
     plt.grid(True)
-    plt.savefig('learning_curves.png')
+    plt.savefig(path)
     plt.show()
 
 
@@ -181,10 +187,11 @@ def test_model(model, opt, epoch):
             total_loss += loss.item() * x_out.size(0)
             total_tokens += x_out.size(0)
 
-    pplx = math.exp(total_loss / total_tokens)
-    print(f"Epoch {epoch+1}: Perplexity = {pplx:.2f}")
+    avg_loss = total_loss / total_tokens
+    pplx = math.exp(avg_loss)
+    print(f"Epoch {epoch+1}: Test Loss = {avg_loss:.4f} | Perplexity = {pplx:.2f}")
 
-    return pplx
+    return avg_loss
 
 
 def main():
@@ -243,8 +250,8 @@ def main():
     opt.total_steps = max(1, opt.epochs * batches_per_epoch)
 
     train_losses, valid_losses = train_model(model, opt)
-    plot_learning_curves(train_losses, valid_losses)
-    test_model(model, opt, -1)
+    test_loss = test_model(model, opt, -1)
+    plot_learning_curves(train_losses, valid_losses, test_loss=test_loss)
 
 
 if __name__ == "__main__":
