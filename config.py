@@ -3,7 +3,8 @@ import argparse
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-no_cuda', action='store_true')
+    parser.add_argument('-no_cuda', action='store_true',
+                        help='Force CPU even if CUDA or MPS is available')
     parser.add_argument('-epochs', type=int, default=20)
     parser.add_argument('-d_model', type=int, default=512)
     parser.add_argument('-n_layers', type=int, default=6)
