@@ -7,3 +7,4 @@ data_cache/
 *.bin
 chat/target/
 learning_curves.png
+modal_out/

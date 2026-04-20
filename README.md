@@ -18,3 +18,8 @@ D_MODEL=384 N_LAYERS=5 HEADS=6 \
 SEQLEN=512 BATCHSIZE=16 \
 EPOCHS=1 WARMUP_STEPS=300 \
 ./run.sh
+
+To run on a Modal GPU instead of locally (modal_app.py, requires `pip install modal && modal setup` once):
+    modal run modal_app.py                        # prepare (if needed) + train, defaults on an L4
+    modal run modal_app.py --d-model 384 --n-layers 5 --heads 6 --seqlen 512 --batchsize 16 --warmup-steps 300
+    modal volume get myowntransformer-data /saved ./modal_out   # pull checkpoints + learning_curves.png
