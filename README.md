@@ -32,7 +32,11 @@ Common invocations:
     modal run modal_app.py::train --epochs 2      # just train, reuse existing volume data
     modal run modal_app.py --bpe-train-docs 500 --epochs 1   # cheap smoke run
 
-Pulling artifacts back once a run finishes:
+Pulling artifacts back once a run finishes (replace `40M_run` with whatever `--dir-name` you used; default is `modal_run`):
+    modal volume get myowntransformer-data /saved/40M_run ./modal_out/40M_run
+    modal volume get myowntransformer-data /saved/40M_run_learning_curves.png ./modal_out/40M_run_learning_curves.png
+
+    # or grab everything under /saved at once:
     modal volume get myowntransformer-data /saved ./modal_out
 The checkpoints land at ./modal_out/<dir_name>/ckpt_*.pt and the plot at ./modal_out/<dir_name>_learning_curves.png.
 
