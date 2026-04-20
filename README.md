@@ -19,7 +19,21 @@ SEQLEN=512 BATCHSIZE=16 \
 EPOCHS=1 WARMUP_STEPS=300 \
 ./run.sh
 
-To run on a Modal GPU instead of locally (modal_app.py, requires `pip install modal && modal setup` once):
+Running on a Modal GPU:
+
+modal_app.py packages the same prepare -> train flow onto Modal so I can burn through the real TinyStories split on a cloud GPU instead of the M3 Air. One-time setup is `pip install modal && modal setup` (opens a browser to link your account). A named Modal Volume (`myowntransformer-data`) holds the tokenizer + .bin shards + checkpoints, so the data prep only runs once and re-training reuses it.
+
+Common invocations:
     modal run modal_app.py                        # prepare (if needed) + train, defaults on an L4
-    modal run modal_app.py --d-model 384 --n-layers 5 --heads 6 --seqlen 512 --batchsize 16 --warmup-steps 300
-    modal volume get myowntransformer-data /saved ./modal_out   # pull checkpoints + learning_curves.png
+    modal run modal_app.py --d-model 384 --n-layers 5 --heads 6 \
+        --seqlen 512 --batchsize 16 --epochs 1 --warmup-steps 300
+    modal run modal_app.py --force-prepare        # rebuild BPE + .bin shards on the volume
+    modal run modal_app.py::prepare               # just prep, no training
+    modal run modal_app.py::train --epochs 2      # just train, reuse existing volume data
+    modal run modal_app.py --bpe-train-docs 500 --epochs 1   # cheap smoke run
+
+Pulling artifacts back once a run finishes:
+    modal volume get myowntransformer-data /saved ./modal_out
+The checkpoints land at ./modal_out/<dir_name>/ckpt_*.pt and the plot at ./modal_out/<dir_name>_learning_curves.png.
+
+GPU choice lives in modal_app.py (`gpu="L4"` — roughly $0.80/hr, plenty for the default 8M config). Bump it to `"L40S"` or `"A100"` if you scale the model up. Timeout is 8h; drop it if you want tighter cost guardrails.
