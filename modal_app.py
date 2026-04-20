@@ -95,7 +95,7 @@ def prepare(force: bool = False, vocab_size: int = 4096, bpe_train_docs: int = 1
 
 @app.function(
     volumes={VOL_MOUNT: vol},
-    gpu="L4",
+    gpu="A100",
     timeout=60 * 60 * 8,
 )
 def train(
