@@ -12,7 +12,7 @@ set -euo pipefail
 
 # --- Data prep knobs ---
 DATA_DIR="${DATA_DIR:-data_cache/tinystories}"
-VOCAB_SIZE="${VOCAB_SIZE:-4096}"
+VOCAB_SIZE="${VOCAB_SIZE:-8192}"
 BPE_TRAIN_DOCS="${BPE_TRAIN_DOCS:-10000}"
 MAX_TRAIN_DOCS="${MAX_TRAIN_DOCS:-}"     # empty = full train split
 MAX_EVAL_DOCS="${MAX_EVAL_DOCS:-}"       # empty = full validation split

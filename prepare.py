@@ -79,7 +79,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--corpus', default='tinystories', choices=['tinystories'])
     parser.add_argument('--output-dir', default='data_cache/tinystories')
-    parser.add_argument('--vocab-size', type=int, default=4096,
+    parser.add_argument('--vocab-size', type=int, default=8192,
                         help='Total vocab size including special tokens')
     parser.add_argument('--bpe-train-docs', type=int, default=5000,
                         help='Number of docs to use for BPE training')

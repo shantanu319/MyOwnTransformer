@@ -69,7 +69,7 @@ SAVE_ROOT = f"{VOL_MOUNT}/saved"
     volumes={VOL_MOUNT: vol},
     timeout=60 * 60 * 2,
 )
-def prepare(force: bool = False, vocab_size: int = 4096, bpe_train_docs: int = 10000):
+def prepare(force: bool = False, vocab_size: int = 8192, bpe_train_docs: int = 10000):
     """Download TinyStories, train BPE, emit train/val/test.bin into the volume."""
     import os
     import subprocess
@@ -95,7 +95,7 @@ def prepare(force: bool = False, vocab_size: int = 4096, bpe_train_docs: int = 1
 
 @app.function(
     volumes={VOL_MOUNT: vol},
-    gpu="A100",
+    gpu="H100",
     timeout=60 * 60 * 8,
 )
 def train(
