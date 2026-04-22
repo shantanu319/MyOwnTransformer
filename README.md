@@ -45,7 +45,7 @@ GPU choice lives in modal_app.py (`gpu="L4"` — roughly $0.80/hr, plenty for th
 If you want to try it yourself, download the latest weights here: 
 https://drive.google.com/file/d/1dS8MitkyJ7bBKZWqizLYizwkZ7WSJR_f/view?usp=sharing
 
-Put them in the root directory of this project, then run the CLI by running this command in the terminal (also from the root dir:
+Put them in the root directory of this project, then run the CLI by running this command in the terminal (also from the root dir):
 cargo run --manifest-path chat/Cargo.toml --release -- \
   --checkpoint ckpt_step21500.pt \
   --data-dir data_cache/tinystories \
