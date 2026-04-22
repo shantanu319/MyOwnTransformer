@@ -41,3 +41,12 @@ Pulling artifacts back once a run finishes (replace `40M_run` with whatever `--d
 The checkpoints land at ./modal_out/<dir_name>/ckpt_*.pt and the plot at ./modal_out/<dir_name>_learning_curves.png.
 
 GPU choice lives in modal_app.py (`gpu="L4"` — roughly $0.80/hr, plenty for the default 8M config). Bump it to `"L40S"` or `"A100"` if you scale the model up. Timeout is 8h; drop it if you want tighter cost guardrails.
+
+If you want to try it yourself, download the latest weights here: 
+https://drive.google.com/file/d/1dS8MitkyJ7bBKZWqizLYizwkZ7WSJR_f/view?usp=sharing
+
+Put them in the root directory of this project, then run the CLI by running this command in the terminal (also from the root dir:
+cargo run --manifest-path chat/Cargo.toml --release -- \
+  --checkpoint ckpt_step21500.pt \
+  --data-dir data_cache/tinystories \
+  --no-cuda
