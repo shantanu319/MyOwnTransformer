@@ -1,25 +1,31 @@
-"""Modal entrypoint: prepare TinyStories + train MyOwnTransformer on a GPU.
+"""Modal entrypoint: prepare a corpus + train MyOwnTransformer on a GPU.
 
 One-time setup:
     pip install modal
     modal setup         # opens a browser to link your account
 
 Usage:
-    # One-shot: prepare (if needed) -> train with defaults on an L4 GPU
+    # One-shot: prepare (if needed) -> train with ~90M defaults on H100.
     modal run modal_app.py
 
-    # Override knobs (names mirror config.py / run.sh):
-    modal run modal_app.py --d-model 384 --n-layers 5 --heads 6 \
-        --seqlen 512 --batchsize 16 --epochs 1 --warmup-steps 300
+    # Override knobs:
+    modal run modal_app.py --d-model 640 --n-layers 14 --heads 10 \
+        --seqlen 1024 --batchsize 128 --epochs 1 --warmup-steps 1000
 
     # Rebuild the tokenizer + .bin shards (otherwise we reuse the volume copy)
     modal run modal_app.py --force-prepare
+
+    # Use a different corpus (options: cosmopedia, tinystories):
+    modal run modal_app.py --corpus tinystories
 
     # Just prep, no training:
     modal run modal_app.py::prepare
 
     # Just train (assumes data already on the volume):
-    modal run modal_app.py::train --epochs 2
+    modal run modal_app.py::train --dir-name my_run
+
+    # Detach (don't block the shell; stream logs with `modal app logs`):
+    modal run --detached modal_app.py
 
     # Pull checkpoints + learning_curves back to ./modal_out/
     modal volume get myowntransformer-data /saved ./modal_out
@@ -29,6 +35,12 @@ import modal
 
 APP_NAME = "myowntransformer"
 VOLUME_NAME = "myowntransformer-data"
+VOL_MOUNT = "/vol"
+SAVE_ROOT = f"{VOL_MOUNT}/saved"
+
+
+def _data_dir(corpus: str) -> str:
+    return f"{VOL_MOUNT}/data_cache/{corpus}"
 
 # torch 2.11 matches what the user runs locally; torch.optim.Muon needs >= 2.9.
 image = (
@@ -60,55 +72,65 @@ image = (
 app = modal.App(APP_NAME, image=image)
 vol = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True)
 
-VOL_MOUNT = "/vol"
-DATA_DIR = f"{VOL_MOUNT}/data_cache/tinystories"
-SAVE_ROOT = f"{VOL_MOUNT}/saved"
-
 
 @app.function(
     volumes={VOL_MOUNT: vol},
-    timeout=60 * 60 * 2,
+    timeout=60 * 60 * 6,
 )
-def prepare(force: bool = False, vocab_size: int = 8192, bpe_train_docs: int = 10000):
-    """Download TinyStories, train BPE, emit train/val/test.bin into the volume."""
+def prepare(
+    corpus: str = "cosmopedia",
+    force: bool = False,
+    vocab_size: int = 32000,
+    bpe_train_docs: int = 10000,
+    max_train_docs: int = 0,
+    holdout_period: int = 500,
+):
+    """Download {corpus}, train BPE, emit train/val/test.bin into the volume.
+
+    max_train_docs=0 means no cap (full stream)."""
     import os
     import subprocess
 
-    if not force and os.path.exists(f"{DATA_DIR}/train.bin"):
-        print(f"{DATA_DIR}/train.bin already exists — skipping (pass --force-prepare to rebuild)")
+    data_dir = _data_dir(corpus)
+
+    if not force and os.path.exists(f"{data_dir}/train.bin"):
+        print(f"{data_dir}/train.bin already exists — skipping (pass --force-prepare to rebuild)")
         return
 
-    os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(data_dir, exist_ok=True)
     os.chdir("/root/src")
-    subprocess.run(
-        [
-            "python", "-u", "prepare.py",
-            "--output-dir", DATA_DIR,
-            "--vocab-size", str(vocab_size),
-            "--bpe-train-docs", str(bpe_train_docs),
-        ],
-        check=True,
-    )
+    cmd = [
+        "python", "-u", "prepare.py",
+        "--corpus", corpus,
+        "--output-dir", data_dir,
+        "--vocab-size", str(vocab_size),
+        "--bpe-train-docs", str(bpe_train_docs),
+        "--holdout-period", str(holdout_period),
+    ]
+    if max_train_docs > 0:
+        cmd += ["--max-train-docs", str(max_train_docs)]
+    subprocess.run(cmd, check=True)
     vol.commit()
-    print(f"Data prepared and committed to volume `{VOLUME_NAME}:{DATA_DIR}`")
+    print(f"Data prepared and committed to volume `{VOLUME_NAME}:{data_dir}`")
 
 
 @app.function(
     volumes={VOL_MOUNT: vol},
     gpu="H100",
-    timeout=60 * 60 * 8,
+    timeout=60 * 60 * 24,
 )
 def train(
-    d_model: int = 256,
-    n_layers: int = 6,
-    heads: int = 4,
-    batchsize: int = 32,
-    seqlen: int = 256,
+    corpus: str = "cosmopedia",
+    d_model: int = 640,
+    n_layers: int = 14,
+    heads: int = 10,
+    batchsize: int = 128,
+    seqlen: int = 1024,
     epochs: int = 1,
     lr: float = 3e-4,
     muon_lr: float = 0.02,
-    warmup_steps: int = 200,
-    save_every: int = 500,
+    warmup_steps: int = 1000,
+    save_every: int = 2000,
     printevery: int = 50,
     dir_name: str = "modal_run",
 ):
@@ -117,9 +139,11 @@ def train(
     import shutil
     import subprocess
 
-    if not os.path.exists(f"{DATA_DIR}/train.bin"):
+    data_dir = _data_dir(corpus)
+    if not os.path.exists(f"{data_dir}/train.bin"):
         raise FileNotFoundError(
-            f"no {DATA_DIR}/train.bin on the volume — run `modal run modal_app.py::prepare` first"
+            f"no {data_dir}/train.bin on the volume — "
+            f"run `modal run modal_app.py::prepare --corpus {corpus}` first"
         )
 
     os.chdir("/root/src")
@@ -134,7 +158,7 @@ def train(
     subprocess.run(
         [
             "python", "-u", "train.py",
-            "-data_dir", DATA_DIR,
+            "-data_dir", data_dir,
             "-dir_name", dir_name,
             "-d_model", str(d_model),
             "-n_layers", str(n_layers),
@@ -161,24 +185,35 @@ def train(
 
 @app.local_entrypoint()
 def main(
+    corpus: str = "cosmopedia",
     force_prepare: bool = False,
-    vocab_size: int = 4096,
+    vocab_size: int = 32000,
     bpe_train_docs: int = 10000,
-    d_model: int = 256,
-    n_layers: int = 6,
-    heads: int = 4,
-    batchsize: int = 32,
-    seqlen: int = 256,
+    max_train_docs: int = 0,
+    holdout_period: int = 500,
+    d_model: int = 640,
+    n_layers: int = 14,
+    heads: int = 10,
+    batchsize: int = 128,
+    seqlen: int = 1024,
     epochs: int = 1,
     lr: float = 3e-4,
     muon_lr: float = 0.02,
-    warmup_steps: int = 200,
-    save_every: int = 500,
+    warmup_steps: int = 1000,
+    save_every: int = 2000,
     printevery: int = 50,
     dir_name: str = "modal_run",
 ):
-    prepare.remote(force=force_prepare, vocab_size=vocab_size, bpe_train_docs=bpe_train_docs)
+    prepare.remote(
+        corpus=corpus,
+        force=force_prepare,
+        vocab_size=vocab_size,
+        bpe_train_docs=bpe_train_docs,
+        max_train_docs=max_train_docs,
+        holdout_period=holdout_period,
+    )
     train.remote(
+        corpus=corpus,
         d_model=d_model,
         n_layers=n_layers,
         heads=heads,
