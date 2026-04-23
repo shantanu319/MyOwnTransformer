@@ -1,4 +1,3 @@
-import math
 import copy
 
 import torch
@@ -46,21 +45,11 @@ class RMSNorm(nn.Module):
         return self.weight * x * rms
 
 
-def attention(q, k, v, d_k, mask=None, dropout=None):
-
-    scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(d_k)
-
-    if mask is not None:
+def attention(q, k, v, mask=None, dropout_p=0.0):
+    # Wrap SDPA so we keep the (1, T, S) bool-mask convention used by nopeak_mask.
+    if mask is not None and mask.dim() == 3:
         mask = mask.unsqueeze(1)
-        scores = scores.masked_fill(mask == 0, -1e9)
-
-    scores = F.softmax(scores, dim=-1)
-
-    if dropout is not None:
-        scores = dropout(scores)
-
-    output = torch.matmul(scores, v)
-    return output
+    return F.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=dropout_p)
 
 
 class MultiHeadAttention(nn.Module):
@@ -120,7 +109,8 @@ class MultiHeadAttention(nn.Module):
             k = self.k_cache[:, :, :start_pos+T]
             v = self.v_cache[:, :, :start_pos+T]
 
-        scores = attention(q, k, v, self.d_k, mask, self.dropout)
+        dropout_p = self.dropout.p if self.training else 0.0
+        scores = attention(q, k, v, mask, dropout_p)
         # concatenate heads and put through final linear layer
         concat = scores.transpose(1, 2).contiguous() \
             .view(bs, -1, self.d_model)
