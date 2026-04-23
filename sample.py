@@ -34,9 +34,19 @@ def _resolve_device(no_cuda):
     return torch.device("cuda:0" if use_cuda else "cpu")
 
 
+def _sample_next(logits, temperature, top_p):
+    logits = logits.float() / max(temperature, 1e-6)
+    probs = F.softmax(logits, dim=-1).squeeze(0)
+    if top_p < 1.0:
+        probs = top_p_filter(probs, top_p)
+        probs = probs / probs.sum()
+    return torch.multinomial(probs, num_samples=1).item()
+
+
 @torch.no_grad()
 def generate(model, tokenizer, prompt, max_tokens, temperature, top_p,
-             max_context, device, eos_id=None, stop_at_eos=True):
+             max_context, device, eos_id=None, stop_at_eos=True,
+             use_kv_cache=True):
     model.eval()
 
     if prompt:
@@ -46,28 +56,57 @@ def generate(model, tokenizer, prompt, max_tokens, temperature, top_p,
     else:
         ids = [0]
 
-    tokens = torch.tensor(ids, dtype=torch.long, device=device).unsqueeze(0)
+    if not use_kv_cache:
+        tokens = torch.tensor(ids, dtype=torch.long, device=device).unsqueeze(0)
+        for _ in range(max_tokens):
+            context = tokens[:, -max_context:]
+            mask = nopeak_mask(context.size(1), device)
+            with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+                logits = model(context, mask)
+            next_id = _sample_next(logits[:, -1, :], temperature, top_p)
+            tokens = torch.cat(
+                [tokens, torch.tensor([[next_id]], dtype=torch.long, device=device)],
+                dim=1,
+            )
+            if stop_at_eos and eos_id is not None and next_id == eos_id:
+                break
+        return tokenizer.decode(tokens[0].tolist())
+
+    # KV-cache path: prefill the prompt, then decode one token at a time.
+    model.reset_cache()
+    all_ids = list(ids)
+
+    def prefill(window):
+        x = torch.tensor(window, dtype=torch.long, device=device).unsqueeze(0)
+        mask = nopeak_mask(x.size(1), device)
+        with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+            logits = model(x, mask, start_pos=0)
+        return logits[:, -1, :]
+
+    last_logits = prefill(all_ids)
+    cache_len = len(all_ids)
 
     for _ in range(max_tokens):
-        context = tokens[:, -max_context:]
-        mask = nopeak_mask(context.size(1), device)
-
-        with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
-            logits = model(context, mask)
-        logits = logits[:, -1, :].float() / max(temperature, 1e-6)
-        probs = F.softmax(logits, dim=-1).squeeze(0)
-
-        if top_p < 1.0:
-            probs = top_p_filter(probs, top_p)
-            probs = probs / probs.sum()
-
-        next_token = torch.multinomial(probs, num_samples=1)
-        tokens = torch.cat([tokens, next_token.unsqueeze(0)], dim=1)
-
-        if stop_at_eos and eos_id is not None and next_token.item() == eos_id:
+        next_id = _sample_next(last_logits, temperature, top_p)
+        all_ids.append(next_id)
+        if stop_at_eos and eos_id is not None and next_id == eos_id:
             break
 
-    return tokenizer.decode(tokens[0].tolist())
+        if cache_len + 1 >= max_context:
+            # Overflow: drop cache and re-prefill the last (max_context - 1) tokens.
+            model.reset_cache()
+            window = all_ids[-(max_context - 1):]
+            last_logits = prefill(window)
+            cache_len = len(window)
+            continue
+
+        x = torch.tensor([[next_id]], dtype=torch.long, device=device)
+        with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+            logits = model(x, None, start_pos=cache_len)
+        last_logits = logits[:, -1, :]
+        cache_len += 1
+
+    return tokenizer.decode(all_ids)
 
 
 def main():
@@ -82,6 +121,9 @@ def main():
     parser.add_argument('--max-context', type=int, default=512)
     parser.add_argument('--seed', type=int, default=None)
     parser.add_argument('--no-cuda', action='store_true')
+    parser.add_argument('--no-kv-cache', action='store_true',
+                        help='Disable KV cache (re-feed full context each step). '
+                             'Temporary: used to verify KV-cache correctness.')
     args = parser.parse_args()
 
     if args.seed is not None:
@@ -124,6 +166,7 @@ def main():
             max_context=args.max_context,
             device=device,
             eos_id=eos_id,
+            use_kv_cache=not args.no_kv_cache,
         )
         print(text)
 
