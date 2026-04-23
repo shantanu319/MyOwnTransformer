@@ -119,9 +119,16 @@ class MultiHeadAttention(nn.Module):
         return output
 
 
+def _round_to_multiple(x, multiple):
+    return ((x + multiple - 1) // multiple) * multiple
+
+
 class SwiGLU(nn.Module):
-    def __init__(self, d_model, d_ff=2048, dropout=0.1):
+    def __init__(self, d_model, d_ff=None, dropout=0.1):
         super().__init__()
+        if d_ff is None:
+            # Match a 4*d_model 2-matmul FFN param budget with 3 matmuls: 8/3*d_model.
+            d_ff = _round_to_multiple(8 * d_model // 3, 64)
         self.w_gate = nn.Linear(d_model, d_ff, bias=False)
         self.w_up = nn.Linear(d_model, d_ff, bias=False)
         self.w_down = nn.Linear(d_ff, d_model, bias=False)
