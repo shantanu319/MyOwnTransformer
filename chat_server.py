@@ -19,10 +19,9 @@ import os
 import sys
 
 import torch
-import torch.nn.functional as F
 
 from model import Transformer, nopeak_mask
-from sample import top_p_filter
+from sample import _sample_next
 from tokenizer import BPETokenizer
 
 
@@ -41,28 +40,73 @@ def _resolve_device(no_cuda):
     return torch.device("cuda:0" if use_cuda else "cpu")
 
 
+def _prefill(model, ids, device):
+    """Batched prefill from start_pos=0. Returns logits for the final token."""
+    x = torch.tensor(ids, dtype=torch.long, device=device).unsqueeze(0)
+    mask = nopeak_mask(x.size(1), device)
+    with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+        logits = model(x, mask, start_pos=0)
+    return logits[:, -1, :]
+
+
+def _decode_one(model, tok_id, start_pos, device):
+    """Run a single token through the model using the existing cache."""
+    x = torch.tensor([[tok_id]], dtype=torch.long, device=device)
+    with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+        logits = model(x, None, start_pos=start_pos)
+    return logits[:, -1, :]
+
+
 @torch.no_grad()
-def generate_into(context_ids, model, eos_id, max_tokens, temperature, top_p,
-                  max_context, device):
-    """Append up to max_tokens to context_ids in place. Returns the newly generated ids."""
+def generate_into(context_ids, cache_len, new_prompt_ids, model, eos_id,
+                  max_tokens, temperature, top_p, max_context, device):
+    """Extend context_ids with new_prompt_ids, generate up to max_tokens, append
+    generated tokens in place. Returns (newly_generated_ids, new_cache_len).
+
+    cache_len is the number of tokens currently represented in the model's KV cache
+    (0 after a reset). The caller is responsible for calling model.reset_cache()
+    when they want to clear state.
+    """
     model.eval()
-    start = len(context_ids)
+    context_ids.extend(new_prompt_ids)
+
+    # If adding this prompt overflows the window, drop cache and re-prefill the tail.
+    if cache_len + len(new_prompt_ids) > max_context:
+        model.reset_cache()
+        window = context_ids[-(max_context - 1):]
+        last_logits = _prefill(model, window, device)
+        cache_len = len(window)
+    elif cache_len == 0:
+        last_logits = _prefill(model, new_prompt_ids, device)
+        cache_len = len(new_prompt_ids)
+    else:
+        # Multi-turn continuation: advance the cache one new-prompt token at a time.
+        # Simpler than building a rectangular causal mask for batched prefill; cost
+        # is len(new_prompt_ids) single-token forwards, bounded by prompt length.
+        last_logits = None
+        for tok in new_prompt_ids:
+            last_logits = _decode_one(model, tok, cache_len, device)
+            cache_len += 1
+
+    generated = []
     for _ in range(max_tokens):
-        window = context_ids[-max_context:]
-        x = torch.tensor(window, dtype=torch.long, device=device).unsqueeze(0)
-        mask = nopeak_mask(x.size(1), device)
-        with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
-            logits = model(x, mask)
-        logits = logits[:, -1, :].float() / max(temperature, 1e-6)
-        probs = F.softmax(logits, dim=-1).squeeze(0)
-        if top_p < 1.0:
-            probs = top_p_filter(probs, top_p)
-            probs = probs / probs.sum()
-        next_token = torch.multinomial(probs, num_samples=1).item()
-        context_ids.append(next_token)
-        if eos_id is not None and next_token == eos_id:
+        next_id = _sample_next(last_logits, temperature, top_p)
+        generated.append(next_id)
+        context_ids.append(next_id)
+        if eos_id is not None and next_id == eos_id:
             break
-    return context_ids[start:]
+
+        if cache_len + 1 > max_context:
+            model.reset_cache()
+            window = context_ids[-(max_context - 1):]
+            last_logits = _prefill(model, window, device)
+            cache_len = len(window)
+            continue
+
+        last_logits = _decode_one(model, next_id, cache_len, device)
+        cache_len += 1
+
+    return generated, cache_len
 
 
 def main():
@@ -100,6 +144,7 @@ def main():
 
     eos_id = tokenizer.special_tokens.get('<|endoftext|>')
     context_ids = []
+    cache_len = 0
 
     _send({"type": "ready"})
 
@@ -116,13 +161,15 @@ def main():
         kind = msg.get("type")
         if kind == "reset":
             context_ids = []
+            cache_len = 0
+            model.reset_cache()
             _send({"type": "reset_ok"})
         elif kind == "prompt":
             prompt = msg.get("prompt", "")
             try:
-                context_ids.extend(tokenizer.encode(prompt))
-                new_ids = generate_into(
-                    context_ids, model, eos_id,
+                new_prompt_ids = tokenizer.encode(prompt)
+                new_ids, cache_len = generate_into(
+                    context_ids, cache_len, new_prompt_ids, model, eos_id,
                     max_tokens=msg.get("max_tokens", args.max_tokens),
                     temperature=msg.get("temperature", args.temperature),
                     top_p=msg.get("top_p", args.top_p),
