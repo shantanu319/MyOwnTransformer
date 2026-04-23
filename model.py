@@ -82,7 +82,7 @@ class MultiHeadAttention(nn.Module):
         self.register_buffer('rope_cos', cos, persistent=False)
         self.register_buffer('rope_sin', sin, persistent=False)
 
-    def forward(self, q, k, v, mask=None):
+    def forward(self, q, k, v, mask=None, start_pos=None):
 
         bs = q.size(0)
 
@@ -97,8 +97,9 @@ class MultiHeadAttention(nn.Module):
         v = v.transpose(1, 2)
 
         T = q.size(2)
-        q = apply_rope(q, self.rope_cos[:T], self.rope_sin[:T])
-        k = apply_rope(k, self.rope_cos[:T], self.rope_sin[:T])
+        pos = start_pos if start_pos is not None else 0
+        q = apply_rope(q, self.rope_cos[pos:pos+T], self.rope_sin[pos:pos+T])
+        k = apply_rope(k, self.rope_cos[pos:pos+T], self.rope_sin[pos:pos+T])
 
         scores = attention(q, k, v, self.d_k, mask, self.dropout)
         # concatenate heads and put through final linear layer
@@ -140,9 +141,9 @@ class DecoderLayer(nn.Module):  # deleted any reference to encoder outputs
         self.attn_1 = MultiHeadAttention(heads, d_model, dropout=dropout)
         self.ff = SwiGLU(d_model, dropout=dropout)
 
-    def forward(self, x, mask):
+    def forward(self, x, mask, start_pos=None):
         x2 = self.norm_1(x)
-        x = x + self.dropout_1(self.attn_1(x2, x2, x2, mask))
+        x = x + self.dropout_1(self.attn_1(x2, x2, x2, mask, start_pos=start_pos))
         x2 = self.norm_3(x)
         x = x + self.dropout_3(self.ff(x2))
         return x
@@ -156,10 +157,10 @@ class Decoder(nn.Module):
         self.layers = get_clones(DecoderLayer(d_model, heads, dropout), N)
         self.norm = RMSNorm(d_model)
 
-    def forward(self, trg, mask):
+    def forward(self, trg, mask, start_pos=None):
         x = self.embed(trg)
         for i in range(self.N):
-            x = self.layers[i](x, mask)
+            x = self.layers[i](x, mask, start_pos=start_pos)
         return self.norm(x)
 
 
@@ -170,8 +171,8 @@ class Transformer(nn.Module):
         self.out = nn.Linear(d_model, vocab)
         self.out.weight = self.decoder.embed.embed.weight
 
-    def forward(self, vocab, mask):
-        d_output = self.decoder(vocab, mask)
+    def forward(self, vocab, mask, start_pos=None):
+        d_output = self.decoder(vocab, mask, start_pos=start_pos)
         output = self.out(d_output)
         return output
 
