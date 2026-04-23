@@ -82,6 +82,13 @@ class MultiHeadAttention(nn.Module):
         self.register_buffer('rope_cos', cos, persistent=False)
         self.register_buffer('rope_sin', sin, persistent=False)
 
+        self.k_cache = None
+        self.v_cache = None
+
+    def reset_cache(self):
+        self.k_cache = None
+        self.v_cache = None
+
     def forward(self, q, k, v, mask=None, start_pos=None):
 
         bs = q.size(0)
@@ -100,6 +107,18 @@ class MultiHeadAttention(nn.Module):
         pos = start_pos if start_pos is not None else 0
         q = apply_rope(q, self.rope_cos[pos:pos+T], self.rope_sin[pos:pos+T])
         k = apply_rope(k, self.rope_cos[pos:pos+T], self.rope_sin[pos:pos+T])
+
+        if start_pos is not None:
+            if self.k_cache is None:
+                max_len = self.rope_cos.size(0)
+                self.k_cache = torch.zeros(bs, self.h, max_len, self.d_k,
+                                           device=q.device, dtype=q.dtype)
+                self.v_cache = torch.zeros(bs, self.h, max_len, self.d_k,
+                                           device=q.device, dtype=q.dtype)
+            self.k_cache[:, :, start_pos:start_pos+T] = k
+            self.v_cache[:, :, start_pos:start_pos+T] = v
+            k = self.k_cache[:, :, :start_pos+T]
+            v = self.v_cache[:, :, :start_pos+T]
 
         scores = attention(q, k, v, self.d_k, mask, self.dropout)
         # concatenate heads and put through final linear layer
@@ -175,6 +194,10 @@ class Transformer(nn.Module):
         d_output = self.decoder(vocab, mask, start_pos=start_pos)
         output = self.out(d_output)
         return output
+
+    def reset_cache(self):
+        for layer in self.decoder.layers:
+            layer.attn_1.reset_cache()
 
 
 def get_model(opt, vocab):
