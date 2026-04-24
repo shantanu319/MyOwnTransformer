@@ -60,10 +60,10 @@ def test_special_tokens_tokenized_as_single_id():
 
 
 def test_train_equivalent_to_naive():
-    """Dedup-based train must produce the exact same merges as the
+    """Incremental train must produce the exact same merges as the
     straightforward per-chunk algorithm — same merges, same ids, same order."""
     from collections import Counter
-    from tokenizer import _get_pair_counts, _merge, GPT2_SPLIT_PATTERN
+    from tokenizer import _get_pair_counts, _merge, _pick_top_pair, GPT2_SPLIT_PATTERN
     import re
 
     def naive_train(text, vocab_size):
@@ -76,7 +76,7 @@ def test_train_equivalent_to_naive():
                 _get_pair_counts(chunk, counts)
             if not counts:
                 break
-            top = counts.most_common(1)[0][0]
+            top = _pick_top_pair(counts)
             new_id = 256 + i
             merges[top] = new_id
             ids = [_merge(c, top, new_id) for c in ids]

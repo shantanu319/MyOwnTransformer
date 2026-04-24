@@ -37,6 +37,15 @@ def _contains_pair(tokens, pair):
     return any(x == a and y == b for x, y in zip(tokens, tokens[1:]))
 
 
+def _pick_top_pair(pair_counts):
+    """Highest-count pair; ties broken by lex-smallest pair.
+
+    Deterministic so the incremental trainer's output doesn't depend on the
+    order in which pairs were first observed across merge steps.
+    """
+    return min(pair_counts.items(), key=lambda kv: (-kv[1], kv[0]))[0]
+
+
 class _LRUCache:
     """Small bounded LRU cache built on OrderedDict."""
 
@@ -129,33 +138,50 @@ class BPETokenizer:
         self.vocab = {i: bytes([i]) for i in range(256)}
         self._chunk_cache = _LRUCache(self.cache_size)
 
-        # TODO: the next major training speedup is maintaining pair counts
-        # incrementally — keep a global Counter plus a pair -> set of chunks
-        # inverted index, and on each merge only rescan the affected chunks
-        # (decrementing old-neighbor pair counts and incrementing new ones).
-        # That replaces the full O(sum of chunk lengths) pass per merge step
-        # with an O(affected chunks) update.
-        for i in range(num_merges):
-            counts = Counter()
-            for chunk_ids, freq in chunks.items():
-                for pair in zip(chunk_ids, chunk_ids[1:]):
-                    counts[pair] += freq
-            if not counts:
-                break
+        # Incremental BPE: maintain a global pair_counts Counter and a
+        # pair_to_chunks inverted index. Each merge step only revisits the
+        # chunks that actually contain the selected pair, instead of rescanning
+        # every chunk. Turns the per-step cost from O(total tokens across all
+        # chunks) into O(tokens in affected chunks).
+        pair_counts = Counter()
+        pair_to_chunks = {}
+        for ck, f in chunks.items():
+            for p in zip(ck, ck[1:]):
+                pair_counts[p] += f
+                pair_to_chunks.setdefault(p, set()).add(ck)
 
-            top_pair = counts.most_common(1)[0][0]
+        for i in range(num_merges):
+            if not pair_counts:
+                break
+            top_pair = _pick_top_pair(pair_counts)
             new_id = 256 + i
             self.merges[top_pair] = new_id
             self.vocab[new_id] = self.vocab[top_pair[0]] + self.vocab[top_pair[1]]
 
-            new_chunks = {}
-            for chunk_ids, freq in chunks.items():
-                if _contains_pair(chunk_ids, top_pair):
-                    merged = tuple(_merge(chunk_ids, top_pair, new_id))
+            affected = pair_to_chunks.pop(top_pair, set())
+            for ck in affected:
+                f = chunks.pop(ck, None)
+                if f is None:
+                    continue  # already folded into another new_ck this step
+                # subtract this chunk's contribution to every pair it had
+                for p in zip(ck, ck[1:]):
+                    pair_counts[p] -= f
+                    if pair_counts[p] <= 0:
+                        del pair_counts[p]
+                    s = pair_to_chunks.get(p)
+                    if s is not None:
+                        s.discard(ck)
+                        if not s:
+                            del pair_to_chunks[p]
+                # apply the merge and re-register
+                new_ck = tuple(_merge(ck, top_pair, new_id))
+                if new_ck in chunks:
+                    chunks[new_ck] += f
                 else:
-                    merged = chunk_ids
-                new_chunks[merged] = new_chunks.get(merged, 0) + freq
-            chunks = new_chunks
+                    chunks[new_ck] = f
+                for p in zip(new_ck, new_ck[1:]):
+                    pair_counts[p] += f
+                    pair_to_chunks.setdefault(p, set()).add(new_ck)
 
             if verbose and (i + 1) % 100 == 0:
                 merged_bytes = self.vocab[new_id]
