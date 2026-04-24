@@ -1,12 +1,14 @@
 import json
 import os
 import re
-from collections import Counter
+from collections import Counter, OrderedDict
 
 
 # GPT-2 style pre-tokenization regex. Pattern is applied before BPE so merges
 # can't cross word boundaries (punctuation, whitespace, etc.).
 GPT2_SPLIT_PATTERN = r"""'s|'t|'re|'ve|'m|'ll|'d| ?\w+| ?[^\s\w]+|\s+(?!\S)|\s+"""
+
+DEFAULT_CHUNK_CACHE_SIZE = 50_000
 
 
 def _get_pair_counts(tokens, counts=None):
@@ -30,25 +32,89 @@ def _merge(tokens, pair, new_id):
     return result
 
 
+def _contains_pair(tokens, pair):
+    a, b = pair
+    return any(x == a and y == b for x, y in zip(tokens, tokens[1:]))
+
+
+class _LRUCache:
+    """Small bounded LRU cache built on OrderedDict."""
+
+    def __init__(self, max_size):
+        self.max_size = max_size
+        self._data = OrderedDict()
+
+    def __len__(self):
+        return len(self._data)
+
+    def __contains__(self, key):
+        return key in self._data
+
+    def __getitem__(self, key):
+        return self._data[key]
+
+    def keys(self):
+        return self._data.keys()
+
+    def __eq__(self, other):
+        if isinstance(other, _LRUCache):
+            return self._data == other._data
+        if isinstance(other, dict):
+            return dict(self._data) == other
+        return NotImplemented
+
+    def get(self, key):
+        val = self._data.get(key)
+        if val is not None:
+            self._data.move_to_end(key)
+        return val
+
+    def put(self, key, value):
+        if key in self._data:
+            self._data.move_to_end(key)
+        self._data[key] = value
+        if len(self._data) > self.max_size:
+            self._data.popitem(last=False)
+
+    def clear(self):
+        self._data.clear()
+
+
 class BPETokenizer:
-    def __init__(self, pattern=None, special_tokens=None):
+    def __init__(self, pattern=None, special_tokens=None, cache_size=DEFAULT_CHUNK_CACHE_SIZE):
         self.pattern = pattern or GPT2_SPLIT_PATTERN
         self._compiled = re.compile(self.pattern)
         self.special_tokens = dict(special_tokens or {})
         self.merges = {}  # (int, int) -> int
         self.vocab = {i: bytes([i]) for i in range(256)}
-        self._chunk_cache = {}  # str chunk -> tuple of token ids
+        self.cache_size = cache_size
+        self._chunk_cache = _LRUCache(cache_size)
+        self._refresh_special_token_maps()
 
     def __getstate__(self):
         # Don't ship the chunk cache through pickle (e.g. multiprocessing) —
         # workers should accumulate their own cache.
         state = self.__dict__.copy()
-        state['_chunk_cache'] = {}
+        state['_chunk_cache'] = _LRUCache(self.cache_size)
         return state
 
     @property
     def vocab_size(self):
         return len(self.vocab) + len(self.special_tokens)
+
+    def _compile_specials(self):
+        if not self.special_tokens:
+            self._specials_re = None
+            return
+        # Sort by descending length so longer tokens take precedence when one
+        # special is a prefix of another.
+        keys = sorted(self.special_tokens.keys(), key=len, reverse=True)
+        pattern = '(' + '|'.join(re.escape(s) for s in keys) + ')'
+        self._specials_re = re.compile(pattern)
+
+    def _refresh_special_token_maps(self):
+        self.inv_specials = {v: k for k, v in self.special_tokens.items()}
+        self._compile_specials()
 
     def train(self, text, vocab_size, verbose=False):
         assert vocab_size >= 256, "vocab_size must be at least 256 (one per byte)"
@@ -61,8 +127,14 @@ class BPETokenizer:
 
         self.merges = {}
         self.vocab = {i: bytes([i]) for i in range(256)}
-        self._chunk_cache = {}
+        self._chunk_cache = _LRUCache(self.cache_size)
 
+        # TODO: the next major training speedup is maintaining pair counts
+        # incrementally — keep a global Counter plus a pair -> set of chunks
+        # inverted index, and on each merge only rescan the affected chunks
+        # (decrementing old-neighbor pair counts and incrementing new ones).
+        # That replaces the full O(sum of chunk lengths) pass per merge step
+        # with an O(affected chunks) update.
         for i in range(num_merges):
             counts = Counter()
             for chunk_ids, freq in chunks.items():
@@ -78,7 +150,10 @@ class BPETokenizer:
 
             new_chunks = {}
             for chunk_ids, freq in chunks.items():
-                merged = tuple(_merge(list(chunk_ids), top_pair, new_id))
+                if _contains_pair(chunk_ids, top_pair):
+                    merged = tuple(_merge(chunk_ids, top_pair, new_id))
+                else:
+                    merged = chunk_ids
                 new_chunks[merged] = new_chunks.get(merged, 0) + freq
             chunks = new_chunks
 
@@ -102,7 +177,7 @@ class BPETokenizer:
                 break
             chunk_ids = _merge(chunk_ids, pair, self.merges[pair])
         result = tuple(chunk_ids)
-        self._chunk_cache[chunk] = result
+        self._chunk_cache.put(chunk, result)
         return result
 
     def encode_ordinary(self, text):
@@ -113,11 +188,10 @@ class BPETokenizer:
         return out
 
     def encode(self, text):
-        if not self.special_tokens:
+        if self._specials_re is None:
             return self.encode_ordinary(text)
-        specials_pattern = '(' + '|'.join(re.escape(s) for s in self.special_tokens) + ')'
         out = []
-        for piece in re.split(specials_pattern, text):
+        for piece in self._specials_re.split(text):
             if piece in self.special_tokens:
                 out.append(self.special_tokens[piece])
             elif piece:
@@ -125,7 +199,7 @@ class BPETokenizer:
         return out
 
     def decode(self, ids):
-        inv_specials = {v: k for k, v in self.special_tokens.items()}
+        inv_specials = self.inv_specials
         parts = []
         byte_buf = bytearray()
         for i in ids:
@@ -160,8 +234,9 @@ class BPETokenizer:
         self.special_tokens = dict(data.get('special_tokens') or {})
         self.merges = {}
         self.vocab = {i: bytes([i]) for i in range(256)}
-        self._chunk_cache = {}
+        self._chunk_cache = _LRUCache(self.cache_size)
         for i, (a, b) in enumerate(data['merges']):
             new_id = 256 + i
             self.merges[(a, b)] = new_id
             self.vocab[new_id] = self.vocab[a] + self.vocab[b]
+        self._refresh_special_token_maps()

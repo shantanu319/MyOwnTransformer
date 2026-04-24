@@ -145,3 +145,55 @@ def test_save_load_roundtrip(tmp_path):
     assert t2.decode(t.encode(text)) == text
     assert t2.merges == t.merges
     assert t2.special_tokens == t.special_tokens
+
+
+def test_chunk_cache_bounded_by_max_size():
+    """Cache must not grow unbounded — it should evict once max_size is hit."""
+    t = BPETokenizer(cache_size=8)
+    t.train(CORPUS, vocab_size=300)
+
+    # Encode far more unique chunks than the cache can hold.
+    text = " ".join(f"unique_word_{i}" for i in range(200))
+    t.encode(text)
+    assert len(t._chunk_cache) <= 8
+
+
+def test_contains_pair_helper():
+    from tokenizer import _contains_pair
+    assert _contains_pair((1, 2, 3, 4), (2, 3))
+    assert _contains_pair([1, 2, 3, 4], (1, 2))
+    assert not _contains_pair((1, 2, 3), (3, 4))
+    assert not _contains_pair((), (1, 2))
+    assert not _contains_pair((5,), (5, 5))
+
+
+def test_overlapping_special_tokens_longest_wins():
+    """Longer specials must take precedence when one is a prefix of another."""
+    t = BPETokenizer(special_tokens={'<|end|>': 500, '<|endoftext|>': 501})
+    t.train(CORPUS, vocab_size=300)
+    ids = t.encode("hi <|endoftext|> bye")
+    assert 501 in ids
+    assert 500 not in ids
+
+
+def test_load_refreshes_special_token_maps(tmp_path):
+    """After load(), decode() and encode() must use the new specials, not stale ones."""
+    t = BPETokenizer(special_tokens={'<|endoftext|>': 500})
+    t.train(CORPUS, vocab_size=300)
+    path = tmp_path / "bpe.json"
+    t.save(str(path))
+
+    t2 = BPETokenizer()  # starts with empty specials
+    t2.load(str(path))
+    assert t2.inv_specials == {500: '<|endoftext|>'}
+    assert t2._specials_re is not None
+    assert t2.decode([500]) == '<|endoftext|>'
+
+
+def test_train_resets_cache():
+    t = BPETokenizer()
+    t.train(CORPUS, vocab_size=300)
+    t.encode("the quick brown fox")
+    assert len(t._chunk_cache) > 0
+    t.train(CORPUS, vocab_size=300)
+    assert len(t._chunk_cache) == 0
