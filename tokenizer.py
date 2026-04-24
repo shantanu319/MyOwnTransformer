@@ -37,6 +37,14 @@ class BPETokenizer:
         self.special_tokens = dict(special_tokens or {})
         self.merges = {}  # (int, int) -> int
         self.vocab = {i: bytes([i]) for i in range(256)}
+        self._chunk_cache = {}  # str chunk -> tuple of token ids
+
+    def __getstate__(self):
+        # Don't ship the chunk cache through pickle (e.g. multiprocessing) —
+        # workers should accumulate their own cache.
+        state = self.__dict__.copy()
+        state['_chunk_cache'] = {}
+        return state
 
     @property
     def vocab_size(self):
@@ -53,6 +61,7 @@ class BPETokenizer:
 
         self.merges = {}
         self.vocab = {i: bytes([i]) for i in range(256)}
+        self._chunk_cache = {}
 
         for i in range(num_merges):
             counts = Counter()
@@ -81,19 +90,26 @@ class BPETokenizer:
                     preview = repr(merged_bytes)
                 print(f"merge {i+1}/{num_merges}: {top_pair} -> {new_id} ({preview!r})")
 
+    def _encode_chunk(self, chunk):
+        cached = self._chunk_cache.get(chunk)
+        if cached is not None:
+            return cached
+        chunk_ids = list(chunk.encode('utf-8'))
+        while len(chunk_ids) >= 2:
+            pairs = set(zip(chunk_ids, chunk_ids[1:]))
+            pair = min(pairs, key=lambda p: self.merges.get(p, float('inf')))
+            if pair not in self.merges:
+                break
+            chunk_ids = _merge(chunk_ids, pair, self.merges[pair])
+        result = tuple(chunk_ids)
+        self._chunk_cache[chunk] = result
+        return result
+
     def encode_ordinary(self, text):
         """Encode ignoring special tokens."""
-        chunks = self._compiled.findall(text)
         out = []
-        for chunk in chunks:
-            chunk_ids = list(chunk.encode('utf-8'))
-            while len(chunk_ids) >= 2:
-                pairs = _get_pair_counts(chunk_ids)
-                pair = min(pairs, key=lambda p: self.merges.get(p, float('inf')))
-                if pair not in self.merges:
-                    break
-                chunk_ids = _merge(chunk_ids, pair, self.merges[pair])
-            out.extend(chunk_ids)
+        for chunk in self._compiled.findall(text):
+            out.extend(self._encode_chunk(chunk))
         return out
 
     def encode(self, text):
@@ -144,6 +160,7 @@ class BPETokenizer:
         self.special_tokens = dict(data.get('special_tokens') or {})
         self.merges = {}
         self.vocab = {i: bytes([i]) for i in range(256)}
+        self._chunk_cache = {}
         for i, (a, b) in enumerate(data['merges']):
             new_id = 256 + i
             self.merges[(a, b)] = new_id

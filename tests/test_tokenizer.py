@@ -93,6 +93,43 @@ def test_train_equivalent_to_naive():
             f"dedup train diverged from naive for vocab={vocab}"
 
 
+def test_chunk_cache_populated_and_consistent():
+    """Repeated encodes of the same text should hit the cache and return
+    identical results to a fresh tokenizer with no cache."""
+    t = BPETokenizer()
+    t.train(CORPUS, vocab_size=400)
+    assert t._chunk_cache == {}
+
+    text = "the quick brown fox the quick brown fox"
+    first = t.encode(text)
+    assert len(t._chunk_cache) > 0
+    cache_after_first = dict(t._chunk_cache)
+
+    second = t.encode(text)
+    assert second == first
+    # Cache should not grow when re-encoding same text.
+    assert t._chunk_cache == cache_after_first
+
+    # Compare against a fresh, cache-free tokenizer.
+    t2 = BPETokenizer()
+    t2.train(CORPUS, vocab_size=400)
+    assert t2.encode(text) == first
+
+
+def test_chunk_cache_dropped_on_pickle():
+    """Cache must not be shipped through pickle — workers should start fresh."""
+    import pickle
+    t = BPETokenizer()
+    t.train(CORPUS, vocab_size=400)
+    t.encode("the quick brown fox")
+    assert len(t._chunk_cache) > 0
+
+    t2 = pickle.loads(pickle.dumps(t))
+    assert t2._chunk_cache == {}
+    assert t2.merges == t.merges
+    assert t2.encode("the quick brown fox") == t.encode("the quick brown fox")
+
+
 def test_save_load_roundtrip(tmp_path):
     t = BPETokenizer(special_tokens={'<|endoftext|>': 500})
     t.train(CORPUS, vocab_size=350)
