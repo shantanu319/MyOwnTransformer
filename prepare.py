@@ -80,7 +80,19 @@ def _iter_encoded(tokenizer, tokenizer_path, dataset, eos_id, max_docs, num_work
             yield i, _encode_row(tokenizer, row, eos_id)
         return
 
-    ctx = mp.get_context('spawn')
+    # Fork beats spawn here by ~3-4x (no Python re-import cost per worker, and
+    # workers inherit the loaded tokenizer via copy-on-write). Spawn is so much
+    # slower than serial it isn't worth using; on platforms without fork
+    # (Windows) we fall back to a serial run.
+    try:
+        ctx = mp.get_context('fork')
+    except ValueError:
+        for i, row in enumerate(dataset):
+            if max_docs is not None and i >= max_docs:
+                break
+            yield i, _encode_row(tokenizer, row, eos_id)
+        return
+
     with ctx.Pool(processes=num_workers,
                   initializer=_init_worker,
                   initargs=(tokenizer_path, eos_id)) as pool:
@@ -133,8 +145,6 @@ def main():
                         help='Cap for tokenizing train split (default: full stream)')
     parser.add_argument('--holdout-period', type=int, default=500,
                         help='Reserve 1-in-N docs each for val and test from the train stream.')
-    parser.add_argument('--num-workers', type=int, default=1,
-                        help='Process pool size for tokenize-to-bin.')
     args = parser.parse_args()
 
     assert args.vocab_size > 256, "vocab_size must leave room for base bytes"
@@ -142,6 +152,7 @@ def main():
         f"vocab_size too large for {BIN_DTYPE}"
 
     os.makedirs(args.output_dir, exist_ok=True)
+    num_workers = os.cpu_count() or 1
 
     eos_id = args.vocab_size - 1
     tokenizer = BPETokenizer(special_tokens={EOS_TOKEN: eos_id})
@@ -163,11 +174,11 @@ def main():
     test_path = os.path.join(args.output_dir, 'test.bin')
 
     print(f"Tokenizing cosmopedia stream into train/val/test "
-          f"(holdout 2-in-{args.holdout_period}, num_workers={args.num_workers})...")
+          f"(holdout 2-in-{args.holdout_period}, num_workers={num_workers})...")
     n_train, n_val, n_test = _tokenize_stream_three_bins(
         tokenizer, tok_path, _load_stream(), eos_id, train_path, val_path, test_path,
         max_docs=args.max_train_docs, holdout_period=args.holdout_period,
-        num_workers=args.num_workers,
+        num_workers=num_workers,
     )
     print(f"  wrote {n_train:,} tokens to {train_path}")
     print(f"  wrote {n_val:,} tokens to {val_path}")
