@@ -3,6 +3,7 @@ import copy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 
 
 class Embedder(nn.Module):
@@ -176,7 +177,10 @@ class Decoder(nn.Module):
     def forward(self, trg, mask, start_pos=None):
         x = self.embed(trg)
         for i in range(self.N):
-            x = self.layers[i](x, mask, start_pos=start_pos)
+            if self.training:
+                x = checkpoint(self.layers[i], x, mask, start_pos, use_reentrant=False)
+            else:
+                x = self.layers[i](x, mask, start_pos=start_pos)
         return self.norm(x)
 
 
