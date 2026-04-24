@@ -59,6 +59,40 @@ def test_special_tokens_tokenized_as_single_id():
     assert t.decode(ids) == "hello <|endoftext|> world"
 
 
+def test_train_equivalent_to_naive():
+    """Dedup-based train must produce the exact same merges as the
+    straightforward per-chunk algorithm — same merges, same ids, same order."""
+    from collections import Counter
+    from tokenizer import _get_pair_counts, _merge, GPT2_SPLIT_PATTERN
+    import re
+
+    def naive_train(text, vocab_size):
+        compiled = re.compile(GPT2_SPLIT_PATTERN)
+        ids = [list(c.encode('utf-8')) for c in compiled.findall(text)]
+        merges = {}
+        for i in range(vocab_size - 256):
+            counts = Counter()
+            for chunk in ids:
+                _get_pair_counts(chunk, counts)
+            if not counts:
+                break
+            top = counts.most_common(1)[0][0]
+            new_id = 256 + i
+            merges[top] = new_id
+            ids = [_merge(c, top, new_id) for c in ids]
+        return merges
+
+    for corpus, vocab in [
+        (CORPUS, 400),
+        ("café résumé naïve " * 20, 320),
+        ("a" * 100 + " b" * 100 + " ab " * 50, 280),
+    ]:
+        t = BPETokenizer()
+        t.train(corpus, vocab_size=vocab)
+        assert t.merges == naive_train(corpus, vocab), \
+            f"dedup train diverged from naive for vocab={vocab}"
+
+
 def test_save_load_roundtrip(tmp_path):
     t = BPETokenizer(special_tokens={'<|endoftext|>': 500})
     t.train(CORPUS, vocab_size=350)

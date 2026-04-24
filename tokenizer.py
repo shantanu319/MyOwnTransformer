@@ -46,25 +46,32 @@ class BPETokenizer:
         assert vocab_size >= 256, "vocab_size must be at least 256 (one per byte)"
         num_merges = vocab_size - 256
 
-        chunks = self._compiled.findall(text)
-        ids = [list(chunk.encode('utf-8')) for chunk in chunks]
+        # Pre-tokenize and dedupe: identical chunks share a merge schedule, so
+        # we only merge each unique chunk once per step, weighted by frequency.
+        chunk_freq = Counter(self._compiled.findall(text))
+        chunks = {tuple(c.encode('utf-8')): f for c, f in chunk_freq.items()}
 
         self.merges = {}
         self.vocab = {i: bytes([i]) for i in range(256)}
 
         for i in range(num_merges):
             counts = Counter()
-            for chunk_ids in ids:
-                _get_pair_counts(chunk_ids, counts)
+            for chunk_ids, freq in chunks.items():
+                for pair in zip(chunk_ids, chunk_ids[1:]):
+                    counts[pair] += freq
             if not counts:
                 break
 
             top_pair = counts.most_common(1)[0][0]
             new_id = 256 + i
-
-            ids = [_merge(c, top_pair, new_id) for c in ids]
             self.merges[top_pair] = new_id
             self.vocab[new_id] = self.vocab[top_pair[0]] + self.vocab[top_pair[1]]
+
+            new_chunks = {}
+            for chunk_ids, freq in chunks.items():
+                merged = tuple(_merge(list(chunk_ids), top_pair, new_id))
+                new_chunks[merged] = new_chunks.get(merged, 0) + freq
+            chunks = new_chunks
 
             if verbose and (i + 1) % 100 == 0:
                 merged_bytes = self.vocab[new_id]
