@@ -4,7 +4,7 @@
 //! Run from repo root:
 //!   cargo run --manifest-path chat/Cargo.toml --release -- \
 //!     --checkpoint saved/model/ckpt_final.pt \
-//!     --data-dir data_cache/tinystories
+//!     --data-dir data_cache/cosmopedia
 //!
 //! Slash commands at the prompt:
 //!   /reset   -- clear accumulated token context
@@ -25,7 +25,7 @@ struct Args {
     #[arg(long)]
     checkpoint: String,
 
-    #[arg(long, default_value = "data_cache/tinystories")]
+    #[arg(long, default_value = "data_cache/cosmopedia")]
     data_dir: String,
 
     #[arg(long, default_value = "chat_server.py")]

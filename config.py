@@ -24,7 +24,7 @@ def parse_args():
     parser.add_argument('-tied', type=int, default=1)
     parser.add_argument('-dir_name', type=str, default='model')
     parser.add_argument('-norm', type=float, default=2.0)
-    parser.add_argument('-data_dir', type=str, default='data_cache/tinystories',
+    parser.add_argument('-data_dir', type=str, default='data_cache/cosmopedia',
                         help='Directory with tokenizer.json + train.bin + val.bin (run prepare.py)')
 
     opt, unknown = parser.parse_known_args()

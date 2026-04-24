@@ -116,7 +116,7 @@ def generate(model, tokenizer, prompt, max_tokens, temperature, top_p,
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--checkpoint', required=True)
-    parser.add_argument('--data-dir', default='data_cache/tinystories')
+    parser.add_argument('--data-dir', default='data_cache/cosmopedia')
     parser.add_argument('--prompt', default='')
     parser.add_argument('--max-tokens', type=int, default=200)
     parser.add_argument('--temperature', type=float, default=0.8)

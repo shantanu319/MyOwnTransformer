@@ -15,9 +15,6 @@ Usage:
     # Rebuild the tokenizer + .bin shards (otherwise we reuse the volume copy)
     modal run modal_app.py --force-prepare
 
-    # Use a different corpus (options: cosmopedia, tinystories):
-    modal run modal_app.py --corpus tinystories
-
     # Just prep, no training:
     modal run modal_app.py::prepare
 
@@ -39,8 +36,7 @@ VOL_MOUNT = "/vol"
 SAVE_ROOT = f"{VOL_MOUNT}/saved"
 
 
-def _data_dir(corpus: str) -> str:
-    return f"{VOL_MOUNT}/data_cache/{corpus}"
+DATA_DIR = f"{VOL_MOUNT}/data_cache/cosmopedia"
 
 # torch 2.11 matches what the user runs locally; torch.optim.Muon needs >= 2.9.
 image = (
@@ -78,31 +74,27 @@ vol = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True)
     timeout=60 * 60 * 6,
 )
 def prepare(
-    corpus: str = "cosmopedia",
     force: bool = False,
     vocab_size: int = 32000,
     bpe_train_docs: int = 10000,
     max_train_docs: int = 0,
     holdout_period: int = 500,
 ):
-    """Download {corpus}, train BPE, emit train/val/test.bin into the volume.
+    """Download cosmopedia, train BPE, emit train/val/test.bin into the volume.
 
     max_train_docs=0 means no cap (full stream)."""
     import os
     import subprocess
 
-    data_dir = _data_dir(corpus)
-
-    if not force and os.path.exists(f"{data_dir}/train.bin"):
-        print(f"{data_dir}/train.bin already exists — skipping (pass --force-prepare to rebuild)")
+    if not force and os.path.exists(f"{DATA_DIR}/train.bin"):
+        print(f"{DATA_DIR}/train.bin already exists — skipping (pass --force-prepare to rebuild)")
         return
 
-    os.makedirs(data_dir, exist_ok=True)
+    os.makedirs(DATA_DIR, exist_ok=True)
     os.chdir("/root/src")
     cmd = [
         "python", "-u", "prepare.py",
-        "--corpus", corpus,
-        "--output-dir", data_dir,
+        "--output-dir", DATA_DIR,
         "--vocab-size", str(vocab_size),
         "--bpe-train-docs", str(bpe_train_docs),
         "--holdout-period", str(holdout_period),
@@ -111,7 +103,7 @@ def prepare(
         cmd += ["--max-train-docs", str(max_train_docs)]
     subprocess.run(cmd, check=True)
     vol.commit()
-    print(f"Data prepared and committed to volume `{VOLUME_NAME}:{data_dir}`")
+    print(f"Data prepared and committed to volume `{VOLUME_NAME}:{DATA_DIR}`")
 
 
 @app.function(
@@ -120,7 +112,6 @@ def prepare(
     timeout=60 * 60 * 24,
 )
 def train(
-    corpus: str = "cosmopedia",
     d_model: int = 640,
     n_layers: int = 14,
     heads: int = 10,
@@ -139,11 +130,10 @@ def train(
     import shutil
     import subprocess
 
-    data_dir = _data_dir(corpus)
-    if not os.path.exists(f"{data_dir}/train.bin"):
+    if not os.path.exists(f"{DATA_DIR}/train.bin"):
         raise FileNotFoundError(
-            f"no {data_dir}/train.bin on the volume — "
-            f"run `modal run modal_app.py::prepare --corpus {corpus}` first"
+            f"no {DATA_DIR}/train.bin on the volume — "
+            f"run `modal run modal_app.py::prepare` first"
         )
 
     os.chdir("/root/src")
@@ -158,7 +148,7 @@ def train(
     subprocess.run(
         [
             "python", "-u", "train.py",
-            "-data_dir", data_dir,
+            "-data_dir", DATA_DIR,
             "-dir_name", dir_name,
             "-d_model", str(d_model),
             "-n_layers", str(n_layers),
@@ -185,7 +175,6 @@ def train(
 
 @app.local_entrypoint()
 def main(
-    corpus: str = "cosmopedia",
     force_prepare: bool = False,
     vocab_size: int = 32000,
     bpe_train_docs: int = 10000,
@@ -205,7 +194,6 @@ def main(
     dir_name: str = "modal_run",
 ):
     prepare.remote(
-        corpus=corpus,
         force=force_prepare,
         vocab_size=vocab_size,
         bpe_train_docs=bpe_train_docs,
@@ -213,7 +201,6 @@ def main(
         holdout_period=holdout_period,
     )
     train.remote(
-        corpus=corpus,
         d_model=d_model,
         n_layers=n_layers,
         heads=heads,

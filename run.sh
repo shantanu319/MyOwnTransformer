@@ -2,7 +2,7 @@
 # One-shot pipeline: prepare data (if needed) -> train -> plot.
 #
 # All knobs are env-var overridable. Defaults target a ~8M-param
-# TinyStories run that should finish overnight on an M3 Air CPU.
+# cosmopedia run that should finish overnight on an M3 Air CPU.
 #
 #   ./run.sh                             # full pipeline with defaults
 #   EPOCHS=3 D_MODEL=128 ./run.sh        # override a few knobs
@@ -11,11 +11,10 @@
 set -euo pipefail
 
 # --- Data prep knobs ---
-DATA_DIR="${DATA_DIR:-data_cache/tinystories}"
-VOCAB_SIZE="${VOCAB_SIZE:-8192}"
+DATA_DIR="${DATA_DIR:-data_cache/cosmopedia}"
+VOCAB_SIZE="${VOCAB_SIZE:-32000}"
 BPE_TRAIN_DOCS="${BPE_TRAIN_DOCS:-10000}"
-MAX_TRAIN_DOCS="${MAX_TRAIN_DOCS:-}"     # empty = full train split
-MAX_EVAL_DOCS="${MAX_EVAL_DOCS:-}"       # empty = full validation split
+MAX_TRAIN_DOCS="${MAX_TRAIN_DOCS:-}"     # empty = full train stream
 
 # --- Model knobs ---
 D_MODEL="${D_MODEL:-256}"
@@ -45,7 +44,6 @@ if [[ "${FORCE_PREPARE}" == "1" ]] || [[ ! -f "${DATA_DIR}/train.bin" ]]; then
         --bpe-train-docs "${BPE_TRAIN_DOCS}"
     )
     [[ -n "${MAX_TRAIN_DOCS}" ]] && prepare_args+=(--max-train-docs "${MAX_TRAIN_DOCS}")
-    [[ -n "${MAX_EVAL_DOCS}" ]]  && prepare_args+=(--max-eval-docs  "${MAX_EVAL_DOCS}")
     python3 prepare.py "${prepare_args[@]}"
 else
     echo "=== Data already prepared in ${DATA_DIR} (set FORCE_PREPARE=1 to redo)"

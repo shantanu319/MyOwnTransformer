@@ -2,11 +2,7 @@
 import numpy as np
 
 from data import BIN_DTYPE
-from prepare import (
-    _iter_encoded,
-    _tokenize_split_to_bin,
-    _tokenize_stream_three_bins,
-)
+from prepare import _iter_encoded, _tokenize_stream_three_bins
 from tokenizer import BPETokenizer
 
 
@@ -61,23 +57,6 @@ def test_iter_encoded_respects_max_docs(tmp_path):
     tok, tok_path, eos_id = _train_tokenizer(tmp_path)
     out = list(_iter_encoded(tok, tok_path, _rows(), eos_id, max_docs=5, num_workers=2))
     assert [i for i, _ in out] == [0, 1, 2, 3, 4]
-
-
-def test_split_to_bin_parallel_byte_equal_to_serial(tmp_path):
-    tok, tok_path, eos_id = _train_tokenizer(tmp_path)
-
-    serial_path = tmp_path / 'serial.bin'
-    n_serial = _tokenize_split_to_bin(
-        tok, tok_path, _rows(), eos_id, str(serial_path), num_workers=1,
-    )
-
-    parallel_path = tmp_path / 'parallel.bin'
-    n_parallel = _tokenize_split_to_bin(
-        tok, tok_path, _rows(), eos_id, str(parallel_path), num_workers=4,
-    )
-
-    assert n_serial == n_parallel
-    assert serial_path.read_bytes() == parallel_path.read_bytes()
 
 
 def test_three_bins_parallel_byte_equal_to_serial(tmp_path):
