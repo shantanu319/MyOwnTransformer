@@ -30,8 +30,12 @@ def top_p_filter(probs, top_p):
 
 
 def _resolve_device(no_cuda):
-    use_cuda = (not no_cuda) and torch.cuda.is_available()
-    return torch.device("cuda:0" if use_cuda else "cpu")
+    if not no_cuda:
+        if torch.cuda.is_available():
+            return torch.device("cuda:0")
+        if torch.backends.mps.is_available():
+            return torch.device("mps")
+    return torch.device("cpu")
 
 
 def _sample_next(logits, temperature, top_p):

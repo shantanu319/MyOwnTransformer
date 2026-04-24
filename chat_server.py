@@ -36,8 +36,12 @@ def _send(obj):
 
 
 def _resolve_device(no_cuda):
-    use_cuda = (not no_cuda) and torch.cuda.is_available()
-    return torch.device("cuda:0" if use_cuda else "cpu")
+    if not no_cuda:
+        if torch.cuda.is_available():
+            return torch.device("cuda:0")
+        if torch.backends.mps.is_available():
+            return torch.device("mps")
+    return torch.device("cpu")
 
 
 def _prefill(model, ids, device):
