@@ -71,7 +71,7 @@ vol = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True)
 
 @app.function(
     volumes={VOL_MOUNT: vol},
-    cpu=4,
+    cpu=4.0,
     timeout=60 * 60 * 6,
 )
 def prepare(
